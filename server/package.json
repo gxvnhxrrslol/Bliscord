@@ -1,0 +1,23 @@
+{
+  "name": "bliscord-server",
+  "version": "1.0.0",
+  "description": "Realtime backend for Bliscord",
+  "author": "Gxvn",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "main": "index.js",
+  "engines": {
+    "node": ">=22.5"
+  },
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning index.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "cors": "^2.8.6",
+    "express": "^5.2.1",
+    "multer": "^2.4.0",
+    "socket.io": "^4.8.4"
+  }
+}

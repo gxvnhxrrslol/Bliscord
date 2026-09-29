@@ -1,0 +1,36 @@
+# Self-hosting on your own VPS: Bliscord server + a coturn TURN relay.
+# 1. Set TURN_SECRET below (any long random string) and PUBLIC_IP to the server's public IP.
+# 2. Open ports 3000/tcp (or put a reverse proxy with HTTPS in front), 3478/tcp+udp and 49160-49200/udp.
+# 3. docker compose up -d
+services:
+  bliscord:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      DATA_DIR: /data
+      TURN_URLS: "turn:${PUBLIC_IP}:3478?transport=udp,turn:${PUBLIC_IP}:3478?transport=tcp"
+      TURN_SECRET: "${TURN_SECRET}"
+    volumes:
+      - bliscord-data:/data
+
+  coturn:
+    image: coturn/coturn:latest
+    restart: unless-stopped
+    network_mode: host
+    command:
+      - -n
+      - --log-file=stdout
+      - --listening-port=3478
+      - --min-port=49160
+      - --max-port=49200
+      - --use-auth-secret
+      - --static-auth-secret=${TURN_SECRET}
+      - --realm=bliscord
+      - --external-ip=${PUBLIC_IP}
+      - --no-cli
+      - --fingerprint
+
+volumes:
+  bliscord-data:

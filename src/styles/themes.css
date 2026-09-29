@@ -1,0 +1,317 @@
+/* ------------------------------------------------------------------ */
+/* Dark (default)                                                      */
+/* ------------------------------------------------------------------ */
+
+:root,
+[data-theme='dark'] {
+  color-scheme: dark;
+  --bg-app: #080a10;
+  --bg-app-solid: #080a10;
+  --bg-1: #10131b;
+  --bg-2: #141824;
+  --bg-3: #1b2030;
+  --bg-4: #242b3d;
+  --panel-bg: var(--bg-1);
+  --main-bg: var(--bg-2);
+  --main-bg-solid: var(--bg-2);
+  --panel-border: rgba(255, 255, 255, 0.05);
+  --panel-shadow: 0 10px 30px -18px rgba(0, 0, 0, 0.8);
+  --hover: rgba(148, 170, 255, 0.06);
+  --active: rgba(148, 170, 255, 0.1);
+  --active-strong: rgba(148, 170, 255, 0.16);
+  --border: rgba(255, 255, 255, 0.06);
+  --border-strong: rgba(255, 255, 255, 0.1);
+  --text: #e9ecf5;
+  --text-2: #a9b1c6;
+  --text-3: #6f7890;
+  --msg-text: #dde2ee;
+  --msg-hover: rgba(148, 170, 255, 0.035);
+  --elev-bg: #181d2a;
+  --elev-solid: #181d2a;
+  --input-bg: #0c0f16;
+  --composer-bg: #1b2030;
+  --island-bg: #161a26;
+  --bg-card: #161a26;
+  --scroll-thumb: rgba(255, 255, 255, 0.1);
+  --scroll-thumb-hover: rgba(255, 255, 255, 0.18);
+  --switch-off: #3b4358;
+  --track: rgba(255, 255, 255, 0.1);
+  --tooltip-bg: #05070b;
+  --tooltip-text: #f1f3f9;
+  --shadow: 0 16px 48px -12px rgba(0, 0, 0, 0.6);
+  --scrim: rgba(3, 5, 10, 0.72);
+  --settings-bg: #141824;
+  --settings-nav-bg: #10131b;
+  --code-bg: #0c0f16;
+  --spoiler: #2b3246;
+  --skeleton: rgba(255, 255, 255, 0.06);
+  --profile-ring: var(--elev-bg);
+  --profile-section: rgba(0, 0, 0, 0.22);
+  --dock-ring: var(--bg-1);
+  --stage-bg: #0a0c12;
+  --tile-base: #161a26;
+  --controls-bg: rgba(20, 24, 36, 0.92);
+  --link: #7aa7ff;
+}
+
+/* ------------------------------------------------------------------ */
+/* Midnight                                                            */
+/* ------------------------------------------------------------------ */
+
+[data-theme='midnight'] {
+  --bg-app: #000;
+  --bg-app-solid: #000;
+  --bg-1: #07080b;
+  --bg-2: #0a0b0f;
+  --bg-3: #12141b;
+  --bg-4: #1b1e28;
+  --panel-border: rgba(255, 255, 255, 0.06);
+  --elev-bg: #0f1116;
+  --elev-solid: #0f1116;
+  --input-bg: #040506;
+  --composer-bg: #12141b;
+  --island-bg: #0e1015;
+  --bg-card: #0e1015;
+  --settings-bg: #0a0b0f;
+  --settings-nav-bg: #050608;
+  --code-bg: #040506;
+  --stage-bg: #000;
+  --tile-base: #0e1015;
+  --controls-bg: rgba(12, 14, 20, 0.94);
+  --dock-ring: var(--bg-1);
+}
+
+/* ------------------------------------------------------------------ */
+/* Light                                                               */
+/* ------------------------------------------------------------------ */
+
+[data-theme='light'] {
+  color-scheme: light;
+  --bg-app: #dfe4ee;
+  --bg-app-solid: #dfe4ee;
+  --bg-1: #f3f5fa;
+  --bg-2: #ffffff;
+  --bg-3: #eceff6;
+  --bg-4: #dfe4ee;
+  --panel-bg: var(--bg-1);
+  --main-bg: var(--bg-2);
+  --main-bg-solid: var(--bg-2);
+  --panel-border: rgba(20, 30, 60, 0.07);
+  --panel-shadow: 0 8px 24px -16px rgba(30, 45, 90, 0.35);
+  --hover: rgba(40, 70, 160, 0.06);
+  --active: rgba(40, 70, 160, 0.1);
+  --active-strong: rgba(40, 70, 160, 0.15);
+  --border: rgba(20, 30, 60, 0.08);
+  --border-strong: rgba(20, 30, 60, 0.13);
+  --text: #121724;
+  --text-2: #4a5469;
+  --text-3: #7c8599;
+  --msg-text: #1d2333;
+  --msg-hover: rgba(40, 70, 160, 0.035);
+  --elev-bg: #ffffff;
+  --elev-solid: #ffffff;
+  --input-bg: #f0f2f8;
+  --composer-bg: #eef1f7;
+  --island-bg: #e8ecf5;
+  --bg-card: #f3f5fa;
+  --scroll-thumb: rgba(20, 30, 60, 0.15);
+  --scroll-thumb-hover: rgba(20, 30, 60, 0.25);
+  --switch-off: #b9c0d0;
+  --track: rgba(20, 30, 60, 0.12);
+  --tooltip-bg: #121724;
+  --tooltip-text: #ffffff;
+  --shadow: 0 16px 44px -14px rgba(30, 45, 90, 0.3);
+  --scrim: rgba(20, 28, 50, 0.45);
+  --settings-bg: #ffffff;
+  --settings-nav-bg: #f3f5fa;
+  --code-bg: #f3f5fa;
+  --spoiler: #cfd5e2;
+  --skeleton: rgba(20, 30, 60, 0.07);
+  --profile-ring: var(--elev-bg);
+  --profile-section: #f3f5fa;
+  --dock-ring: var(--bg-1);
+  --stage-bg: #1a1e2a;
+  --tile-base: #262c3c;
+  --controls-bg: rgba(255, 255, 255, 0.94);
+  --link: #2f5fe0;
+  --success: #1fae5b;
+  --success-rgb: 31, 174, 91;
+}
+[data-theme='light'] .dock-home-mark,
+[data-theme='light'] .dock-action { background: #e3e8f2; }
+[data-theme='light'] .stage .tile-label { color: #fff; }
+[data-theme='light'] .voice-view .chat-header,
+[data-theme='light'] .call-stage { color: var(--text); }
+
+/* ------------------------------------------------------------------ */
+/* Liquid Glass (dark)                                                 */
+/* ------------------------------------------------------------------ */
+
+[data-theme='glass'] {
+  color-scheme: dark;
+  --bg-app: transparent;
+  --bg-app-solid: #0b1020;
+  --bg-1: rgba(20, 26, 44, 0.5);
+  --bg-2: rgba(16, 21, 38, 0.46);
+  --bg-3: rgba(255, 255, 255, 0.08);
+  --bg-4: rgba(255, 255, 255, 0.14);
+  --panel-bg: rgba(18, 24, 42, 0.38);
+  --main-bg: rgba(14, 19, 34, 0.34);
+  --main-bg-solid: #121831;
+  --panel-border: rgba(255, 255, 255, 0.14);
+  --panel-shadow: 0 30px 60px -30px rgba(0, 0, 0, 0.55);
+  --hover: rgba(255, 255, 255, 0.07);
+  --active: rgba(255, 255, 255, 0.12);
+  --active-strong: rgba(255, 255, 255, 0.18);
+  --border: rgba(255, 255, 255, 0.1);
+  --border-strong: rgba(255, 255, 255, 0.18);
+  --text: #f4f6fc;
+  --text-2: #c3cbe0;
+  --text-3: #8c96b3;
+  --msg-text: #eaeefa;
+  --msg-hover: rgba(255, 255, 255, 0.045);
+  --elev-bg: rgba(24, 30, 52, 0.55);
+  --elev-solid: rgba(22, 28, 48, 0.9);
+  --input-bg: rgba(0, 0, 0, 0.22);
+  --composer-bg: rgba(255, 255, 255, 0.08);
+  --island-bg: rgba(255, 255, 255, 0.07);
+  --bg-card: rgba(255, 255, 255, 0.06);
+  --scroll-thumb: rgba(255, 255, 255, 0.16);
+  --scroll-thumb-hover: rgba(255, 255, 255, 0.26);
+  --switch-off: rgba(255, 255, 255, 0.2);
+  --track: rgba(255, 255, 255, 0.16);
+  --tooltip-bg: rgba(10, 14, 28, 0.9);
+  --tooltip-text: #fff;
+  --shadow: 0 24px 60px -18px rgba(0, 0, 0, 0.6);
+  --scrim: rgba(5, 8, 20, 0.35);
+  --settings-bg: rgba(12, 16, 32, 0.55);
+  --settings-nav-bg: rgba(255, 255, 255, 0.04);
+  --code-bg: rgba(0, 0, 0, 0.28);
+  --spoiler: rgba(255, 255, 255, 0.25);
+  --skeleton: rgba(255, 255, 255, 0.08);
+  --profile-ring: rgba(30, 38, 64, 1);
+  --profile-section: rgba(0, 0, 0, 0.2);
+  --dock-ring: rgba(30, 38, 64, 1);
+  --stage-bg: transparent;
+  --tile-base: rgba(10, 14, 28, 0.55);
+  --controls-bg: rgba(20, 26, 46, 0.45);
+  --link: #9cc0ff;
+}
+
+/* Frost glass (light) */
+[data-theme='glass-light'] {
+  color-scheme: light;
+  --bg-app: transparent;
+  --bg-app-solid: #e6ebf7;
+  --bg-1: rgba(255, 255, 255, 0.5);
+  --bg-2: rgba(255, 255, 255, 0.45);
+  --bg-3: rgba(255, 255, 255, 0.55);
+  --bg-4: rgba(255, 255, 255, 0.75);
+  --panel-bg: rgba(255, 255, 255, 0.36);
+  --main-bg: rgba(255, 255, 255, 0.42);
+  --main-bg-solid: #eef1fa;
+  --panel-border: rgba(255, 255, 255, 0.65);
+  --panel-shadow: 0 30px 60px -30px rgba(40, 50, 100, 0.35);
+  --hover: rgba(30, 50, 120, 0.06);
+  --active: rgba(30, 50, 120, 0.1);
+  --active-strong: rgba(30, 50, 120, 0.15);
+  --border: rgba(30, 50, 120, 0.1);
+  --border-strong: rgba(30, 50, 120, 0.16);
+  --text: #111827;
+  --text-2: #3f4a63;
+  --text-3: #6b7590;
+  --msg-text: #1a2133;
+  --msg-hover: rgba(30, 50, 120, 0.04);
+  --elev-bg: rgba(255, 255, 255, 0.62);
+  --elev-solid: rgba(250, 251, 255, 0.94);
+  --input-bg: rgba(255, 255, 255, 0.55);
+  --composer-bg: rgba(255, 255, 255, 0.6);
+  --island-bg: rgba(255, 255, 255, 0.5);
+  --bg-card: rgba(255, 255, 255, 0.5);
+  --scroll-thumb: rgba(30, 50, 120, 0.18);
+  --scroll-thumb-hover: rgba(30, 50, 120, 0.28);
+  --switch-off: rgba(30, 50, 120, 0.25);
+  --track: rgba(30, 50, 120, 0.14);
+  --tooltip-bg: rgba(17, 24, 39, 0.92);
+  --tooltip-text: #fff;
+  --shadow: 0 24px 60px -18px rgba(40, 50, 100, 0.35);
+  --scrim: rgba(200, 210, 240, 0.35);
+  --settings-bg: rgba(255, 255, 255, 0.5);
+  --settings-nav-bg: rgba(255, 255, 255, 0.3);
+  --code-bg: rgba(255, 255, 255, 0.6);
+  --spoiler: rgba(30, 50, 120, 0.25);
+  --skeleton: rgba(30, 50, 120, 0.08);
+  --profile-ring: #f4f6fd;
+  --profile-section: rgba(255, 255, 255, 0.5);
+  --dock-ring: #eef1fa;
+  --stage-bg: rgba(10, 14, 30, 0.1);
+  --tile-base: rgba(30, 40, 70, 0.6);
+  --controls-bg: rgba(255, 255, 255, 0.5);
+  --link: #2f5fe0;
+  --success: #1fae5b;
+  --success-rgb: 31, 174, 91;
+}
+
+/* Scenes behind the glass */
+[data-theme^='glass'] .backdrop { display: block; }
+[data-scene='aurora'] { --scene-base: #070b1a; --orb-1: #2f5bff; --orb-2: #7a3dff; --orb-3: #00c2b0; --orb-4: #1fa2ff; }
+[data-scene='ocean'] { --scene-base: #031026; --orb-1: #0a4bff; --orb-2: #00a3ff; --orb-3: #0071b8; --orb-4: #00e0ff; }
+[data-scene='sunset'] { --scene-base: #1a0714; --orb-1: #ff5a36; --orb-2: #ff2d87; --orb-3: #7a2dff; --orb-4: #ffb03b; }
+[data-scene='nebula'] { --scene-base: #0d0620; --orb-1: #a33cff; --orb-2: #ff3cc8; --orb-3: #3b3bff; --orb-4: #00b3ff; }
+[data-scene='mint'] { --scene-base: #04140f; --orb-1: #00d49a; --orb-2: #33b8ff; --orb-3: #00a86b; --orb-4: #a3ff6b; }
+[data-theme='glass-light'][data-scene] { --scene-base: #e8ecf8; }
+[data-theme='glass-light'] .orb { opacity: 0.55; }
+
+/* Frosted panels: soft blur over the scene */
+[data-theme^='glass'] .glass {
+  backdrop-filter: blur(28px) saturate(170%);
+  -webkit-backdrop-filter: blur(28px) saturate(170%);
+}
+
+/* Liquid glass: refraction at the rim plus a light blur */
+[data-theme^='glass'] .glass-strong {
+  backdrop-filter: url(#liquid-glass) blur(2px) saturate(150%);
+}
+[data-theme^='glass'] .dock.glass-strong { backdrop-filter: url(#liquid-glass-strong); background: rgba(255, 255, 255, 0.06); }
+[data-theme='glass-light'] .dock.glass-strong { background: rgba(255, 255, 255, 0.28); }
+[data-theme^='glass'] .menu,
+[data-theme^='glass'] .popout,
+[data-theme^='glass'] .incoming-call,
+[data-theme^='glass'] .stage-controls,
+[data-theme^='glass'] .user-panel { background: var(--elev-bg); }
+[data-theme^='glass'] .modal { background: var(--elev-solid); backdrop-filter: blur(30px) saturate(170%); }
+[data-theme^='glass'] .settings-layer { backdrop-filter: blur(40px) saturate(160%); }
+[data-theme^='glass'] .auth-card { background: var(--elev-bg); }
+[data-theme^='glass'] .modal-backdrop { backdrop-filter: blur(3px); }
+
+/* Specular rim: a gradient hairline that catches light on the top-left edge */
+[data-theme^='glass'] .panel::before,
+[data-theme^='glass'] .glass-strong::before,
+[data-theme^='glass'] .modal::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0.08) 30%, rgba(255, 255, 255, 0) 55%, rgba(255, 255, 255, 0.18));
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+  z-index: 10;
+}
+[data-theme^='glass'] .user-panel,
+[data-theme^='glass'] .auth-card { position: relative; }
+[data-theme^='glass'] .panel,
+[data-theme^='glass'] .glass-strong {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12), var(--panel-shadow);
+}
+[data-theme^='glass'] .day-divider span { background: transparent; backdrop-filter: blur(12px); }
+[data-theme^='glass'] .btn-primary { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35), 0 8px 22px -8px rgba(var(--accent-rgb), 0.9); }
+[data-theme^='glass'] .dock-lens {
+  background: radial-gradient(120% 120% at 30% 0%, rgba(255, 255, 255, 0.35), rgba(var(--accent-rgb), 0.2) 55%, rgba(var(--accent-rgb), 0.1));
+  border-color: rgba(255, 255, 255, 0.45);
+  backdrop-filter: url(#liquid-glass-strong);
+}
+[data-theme^='glass'] .titlebar { background: transparent; }
+[data-theme^='glass'] .tile { box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.12) inset; }

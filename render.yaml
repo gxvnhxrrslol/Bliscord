@@ -1,0 +1,19 @@
+# Render Blueprint: New > Blueprint in the Render dashboard, then pick this repo.
+# The disk keeps accounts, messages and uploads across deploys (requires a paid instance).
+services:
+  - type: web
+    name: bliscord
+    runtime: docker
+    plan: starter
+    healthCheckPath: /api/health
+    disk:
+      name: bliscord-data
+      mountPath: /data
+      sizeGB: 5
+    envVars:
+      - key: DATA_DIR
+        value: /data
+      - key: METERED_DOMAIN
+        sync: false
+      - key: METERED_API_KEY
+        sync: false

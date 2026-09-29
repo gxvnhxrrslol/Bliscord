@@ -1,0 +1,28 @@
+# Fly.io: `fly launch --no-deploy`, then `fly volumes create bliscord_data --size 3`, then `fly deploy`.
+# Pick a region close to most of your users (e.g. yyz Toronto, iad Virginia, ord Chicago).
+app = "bliscord"
+primary_region = "yyz"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "3000"
+  DATA_DIR = "/data"
+
+[[mounts]]
+  source = "bliscord_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  auto_stop_machines = "off"
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    grace_period = "10s"
+    interval = "30s"
+    method = "GET"
+    path = "/api/health"
+    timeout = "5s"

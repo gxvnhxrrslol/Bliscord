@@ -1,0 +1,43 @@
+# Builds the Windows installer and publishes it as a GitHub Release.
+# Installed copies of Bliscord check these releases and update themselves.
+#
+# To ship an update:
+#   1. Bump "version" in package.json (e.g. 1.0.1)
+#   2. git commit -am "v1.0.1" && git tag v1.0.1 && git push --follow-tags
+#
+# Optional: set a repository variable BLISCORD_SERVER_URL (Settings > Secrets and
+# variables > Actions > Variables) so the installer connects to your server by default.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      - name: Point the app at the production server
+        if: ${{ vars.BLISCORD_SERVER_URL != '' }}
+        shell: bash
+        run: echo "{ \"serverUrl\": \"${{ vars.BLISCORD_SERVER_URL }}\" }" > app.config.json
+
+      - run: npx vite build
+
+      - name: Build installer and publish release
+        run: npx electron-builder --win --publish always -c.publish.owner=${{ github.repository_owner }} -c.publish.repo=${{ github.event.repository.name }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
