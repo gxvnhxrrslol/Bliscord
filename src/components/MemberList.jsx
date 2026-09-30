@@ -238,7 +238,7 @@ export function ProfileCard({ userId, serverId, compact = false, onAction }) {
         <div className="profile-names">
           <h3><StyledName user={user} color={color}>{displayName(user, member)}</StyledName><VerifiedMark user={user} size={18} /></h3>
           <div className="profile-username">
-            @{user.username}
+            {!user.badges?.includes('official') && `@${user.username}`}
             {user.pronouns && <span className="profile-pronouns">{user.pronouns}</span>}
           </div>
         </div>

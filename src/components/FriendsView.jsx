@@ -40,7 +40,7 @@ function FriendRow({ user, type }) {
     >
       <Avatar user={user} size={36} status={type === 'blocked' ? undefined : user.presence} />
       <div className="friend-text" onClick={(e) => { e.stopPropagation(); openPopout(user.id, e.currentTarget.getBoundingClientRect()); }}>
-        <span className="friend-name">{displayName(user)}<VerifiedMark user={user} size={14} /> <span className="friend-username">@{user.username}</span></span>
+        <span className="friend-name">{displayName(user)}<VerifiedMark user={user} size={14} /> {!user.badges?.includes('official') && <span className="friend-username">@{user.username}</span>}</span>
         <span className="friend-sub">{sub}</span>
       </div>
       <div className="friend-actions" onClick={(e) => e.stopPropagation()}>

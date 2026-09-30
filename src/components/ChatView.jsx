@@ -874,7 +874,7 @@ export function DmView({ dmId }) {
     <div className="channel-intro dm-intro">
       <Avatar user={user} size={84} />
       <h1>{displayName(user)}</h1>
-      <p className="intro-username">@{user.username}</p>
+      {!user.badges?.includes('official') && <p className="intro-username">@{user.username}</p>}
       <p>This is the beginning of your conversation with <b>{displayName(user)}</b>.</p>
       <div className="intro-actions">
         {relationship === 'friend' && <Button variant="soft" onClick={() => removeFriend(user.id)}>Remove friend</Button>}

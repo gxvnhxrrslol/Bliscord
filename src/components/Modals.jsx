@@ -487,7 +487,7 @@ function QuickSwitcherModal() {
     const match = (s) => !needle || s.toLowerCase().includes(needle);
     for (const dm of Object.values(state.dms)) {
       const u = state.users[dm.recipientId];
-      if (u && match(`${u.displayName} ${u.username}`)) items.push({ key: dm.id, kind: 'dm', user: u, label: displayName(u), sub: `@${u.username}`, go: () => openHome(dm.id), rank: dm.lastMessageAt || 0 });
+      if (u && match(`${u.displayName} ${u.username}`)) items.push({ key: dm.id, kind: 'dm', user: u, label: displayName(u), sub: u.badges?.includes('official') ? '' : `@${u.username}`, go: () => openHome(dm.id), rank: dm.lastMessageAt || 0 });
     }
     for (const [id, type] of Object.entries(state.relationships)) {
       if (type !== 'friend' || Object.values(state.dms).some((d) => d.recipientId === id)) continue;

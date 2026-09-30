@@ -31,6 +31,8 @@ export function StatusDot({ status = 'offline', size = 10, className = '' }) {
 export function Avatar({ user, size = 40, status, speaking = false, className = '', onClick, square = false, decorate = true }) {
   const decoration = decorate && size >= 20 ? user?.profile?.decoration : null;
   const src = assetUrl(user?.avatar);
+  // The official account never shows a status.
+  if (user?.badges?.includes('official')) status = undefined;
   const dot = status ? Math.max(10, Math.round(size * 0.3)) : 0;
   const gap = size >= 64 ? 4 : 2.5;
   const inset = size >= 64 ? size * 0.04 : 0;
