@@ -3,7 +3,8 @@
 #
 # To ship an update:
 #   1. Bump "version" in package.json (e.g. 1.0.1)
-#   2. git commit -am "v1.0.1" && git tag v1.0.1 && git push --follow-tags
+#   2. Add an entry for it to src/changelog.json
+#   3. git commit -am "v1.0.1" && git tag v1.0.1 && git push --follow-tags
 #
 # Optional: set a repository variable BLISCORD_SERVER_URL (Settings > Secrets and
 # variables > Actions > Variables) so the installer connects to your server by default.
@@ -12,7 +13,6 @@ name: Release
 on:
   push:
     tags: ['v*']
-  workflow_dispatch:
 
 permissions:
   contents: write
@@ -40,6 +40,16 @@ jobs:
       - run: npx vite build
 
       - run: node scripts/release-notes.mjs
+
+      # Create the release up front. electron-builder uploads files in parallel and,
+      # if no release exists yet, each upload creates its own (duplicate) release.
+      - name: Create the GitHub release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          while gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; do gh release delete "$GITHUB_REF_NAME" --yes; done
+          gh release create "$GITHUB_REF_NAME" --title "Bliscord ${GITHUB_REF_NAME#v}" --notes-file build/release-notes.md
 
       - name: Build installer and publish release
         shell: bash
