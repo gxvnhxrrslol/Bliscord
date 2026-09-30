@@ -18,7 +18,8 @@ export const VIDEO_CODECS = {
 };
 
 const CAMERA_BITRATE = 3_500_000;
-const MIC_BITRATE = 96_000;
+const MIC_BITRATE = { mono: 96_000, stereo: 160_000 };
+const isStereoMic = () => getState().settings.micChannels === 'stereo';
 const STREAM_AUDIO_BITRATE = 192_000;
 const REMOTE_SPEAKING_THRESHOLD = 0.012;
 const GATE_HOLD_MS = 280;
@@ -60,6 +61,18 @@ function tuneRemoteSdp(sdp) {
   return out;
 }
 
+/**
+ * Our own description tells the other side what we can receive. WebRTC only
+ * decodes Opus as stereo when this says stereo=1, so stereo mics and stream
+ * audio keep their left/right channels.
+ */
+function tuneLocalSdp(sdp) {
+  const opus = [...sdp.matchAll(/a=rtpmap:(\d+) opus\//gi)].map((m) => m[1]);
+  return sdp.replace(/a=fmtp:(\d+) ([^\r\n]*)/g, (line, pt, params) => (
+    opus.includes(pt) && !params.includes('stereo=') ? `${line};stereo=1;sprop-stereo=1` : line
+  ));
+}
+
 function rms(analyser, buf) {
   analyser.getFloatTimeDomainData(buf);
   let sum = 0;
@@ -75,6 +88,8 @@ class VoiceEngine {
     this.joinedAt = null;
     this.muted = false;
     this.deafened = false;
+    this.forcedMute = false;
+    this.forcedDeaf = false;
     this.micError = null;
     this.graph = null;
     this.micStream = null;
@@ -111,6 +126,8 @@ class VoiceEngine {
       joinedAt: this.joinedAt,
       muted: this.muted || Boolean(this.roomId && !this.micStream && !this.joining),
       deafened: this.deafened,
+      serverMuted: this.forcedMute,
+      serverDeafened: this.forcedDeaf,
       micError: this.micError,
       cameraStream: this.cameraStream,
       screenStream: this.screenStream,
@@ -138,7 +155,8 @@ class VoiceEngine {
     }
     const ctx = new AudioContext({ latencyHint: 'interactive' });
     const dest = ctx.createMediaStreamDestination();
-    dest.channelCount = 1;
+    dest.channelCountMode = 'explicit';
+    dest.channelCount = isStereoMic() ? 2 : 1;
     const gate = ctx.createGain();
     gate.gain.value = 0;
     const inputGain = ctx.createGain();
@@ -155,11 +173,13 @@ class VoiceEngine {
 
   async acquireMic() {
     const s = getState().settings;
+    // Voice processing in Chromium is mono-only, so stereo capture turns it off.
+    const stereo = isStereoMic();
     const audio = {
-      echoCancellation: s.echoCancellation,
-      noiseSuppression: s.noiseSuppression,
-      autoGainControl: s.autoGainControl,
-      channelCount: 1,
+      echoCancellation: stereo ? false : s.echoCancellation,
+      noiseSuppression: stereo ? false : s.noiseSuppression,
+      autoGainControl: stereo ? false : s.autoGainControl,
+      channelCount: stereo ? { ideal: 2 } : 1,
     };
     if (s.inputDeviceId && s.inputDeviceId !== 'default') audio.deviceId = { exact: s.inputDeviceId };
     try {
@@ -196,6 +216,8 @@ class VoiceEngine {
 
   /** Re-acquire the microphone after a device or processing change. The outgoing track stays the same. */
   async reloadMic() {
+    if (this.graph) this.graph.dest.channelCount = isStereoMic() ? 2 : 1;
+    for (const peer of this.peers.values()) this.applyEncodings(peer);
     if (!this.micStream) return;
     this.releaseMic();
     await this.ensureMic();
@@ -219,13 +241,15 @@ class VoiceEngine {
     const level = g.source ? rms(g.analyser, g.buf) : 0;
     for (const l of this.levelListeners) l(level, threshold);
     if (level > threshold) this.lastVoiceAt = now;
-    const open = !this.muted && !this.deafened && now - this.lastVoiceAt < GATE_HOLD_MS;
+    const open = !this.muted && !this.deafened && !this.forcedMute && !this.forcedDeaf && now - this.lastVoiceAt < GATE_HOLD_MS;
     g.gate.gain.setTargetAtTime(open ? 1 : 0, g.ctx.currentTime, 0.015);
 
     const next = new Set();
     if (open && this.roomId && this.myId) next.add(this.myId);
     for (const [id, peer] of this.peers) {
-      for (const a of peer.analysers.values()) {
+      for (const [streamId, a] of peer.analysers) {
+        // Only the mic counts as speaking; screen share audio never lights the ring.
+        if (this.isScreenStream(id, streamId)) continue;
         if (rms(a, g.buf) > REMOTE_SPEAKING_THRESHOLD) { next.add(id); break; }
       }
     }
@@ -302,6 +326,8 @@ class VoiceEngine {
     this.cleanupMedia();
     this.roomId = null;
     this.joinedAt = null;
+    this.forcedMute = false;
+    this.forcedDeaf = false;
     this.speaking = new Set();
     if (!silent) playSound('leave');
     this.emit();
@@ -366,7 +392,9 @@ class VoiceEngine {
       try {
         peer.makingOffer = true;
         preferCodecs(pc);
-        await pc.setLocalDescription();
+        const offer = await pc.createOffer();
+        if (pc.signalingState !== 'stable') return;
+        await pc.setLocalDescription({ type: 'offer', sdp: tuneLocalSdp(offer.sdp) });
         send({ description: pc.localDescription });
       } catch (err) {
         console.warn('[voice] negotiation failed', err);
@@ -426,7 +454,8 @@ class VoiceEngine {
       await pc.setRemoteDescription({ type: description.type, sdp: tuneRemoteSdp(description.sdp) });
       if (description.type === 'offer') {
         preferCodecs(pc);
-        await pc.setLocalDescription();
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription({ type: 'answer', sdp: tuneLocalSdp(answer.sdp) });
         getSocket()?.emit('rtc:signal', { to: peer.userId, data: { description: pc.localDescription } }, () => {});
       }
       this.applyEncodings(peer);
@@ -451,7 +480,7 @@ class VoiceEngine {
       if (sender.track.kind === 'video') params.degradationPreference = maxFramerate >= 60 ? 'maintain-framerate' : 'maintain-resolution';
       await sender.setParameters(params).catch(() => {});
     };
-    await tune(peer.senders.audio, MIC_BITRATE);
+    await tune(peer.senders.audio, isStereoMic() ? MIC_BITRATE.stereo : MIC_BITRATE.mono);
     for (const s of peer.senders.camera) if (s.track?.kind === 'video') await tune(s, CAMERA_BITRATE, 30);
     const q = this.screenQuality;
     for (const s of peer.senders.screen) {
@@ -475,7 +504,7 @@ class VoiceEngine {
   }
 
   isMutedFor(userId, streamId) {
-    if (this.deafened) return true;
+    if (this.deafened || this.forcedDeaf) return true;
     if (!this.isScreenStream(userId, streamId)) return false;
     const { mutedStreams, hiddenStreams } = getState();
     return Boolean(mutedStreams[userId] || hiddenStreams[userId]);
@@ -539,6 +568,15 @@ class VoiceEngine {
     playSound(muted ? 'mute' : 'unmute');
     if (!muted && this.roomId && !this.micStream) await this.ensureMic();
     this.pushState();
+    this.emit();
+  }
+
+  /** Server-side mute/deafen (moderators) or a channel without Speak permission. */
+  setForced({ muted = false, deafened = false }) {
+    if (muted === this.forcedMute && deafened === this.forcedDeaf) return;
+    this.forcedMute = muted;
+    this.forcedDeaf = deafened;
+    this.refreshVolumes();
     this.emit();
   }
 

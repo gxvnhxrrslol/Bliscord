@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { getState, updateSettings, useStore } from '../lib/store';
 import {
   createChannel, createServer, joinServer, openDm, openHome, previewInvite, resetInvite, selectChannel,
-  selectServer, setNickname, toast, updateChannel, deleteChannel, openModal,
+  selectServer, setMemberRoles, setNickname, toast,
 } from '../lib/actions';
 import { assetUrl, native } from '../lib/api';
 import { goLive } from '../lib/media';
@@ -12,6 +12,8 @@ import { Avatar, Button, Field, ServerGlyph, Spinner, Switch, copyText, pickFile
 import SettingsModal from './SettingsModal';
 import ServerSettingsModal from './ServerSettings';
 import WhatsNewModal from './WhatsNew';
+import ChannelSettingsModal from './ChannelSettings';
+import { can, P } from '../lib/perms';
 import Icon from './Icons';
 
 /* ---------------- Image picker ---------------- */
@@ -156,7 +158,7 @@ function CreateServerModal({ mode: initialMode = 'choose' }) {
 
 function InviteModal({ serverId }) {
   const server = useStore((s) => s.servers[serverId]);
-  const role = useStore((s) => s.members[serverId]?.[s.me.id]?.role);
+  const canReset = useStore((s) => can(s, serverId, P.MANAGE_SERVER));
   const [copied, setCopied] = useState(false);
   if (!server) return null;
   const copy = async () => {
@@ -177,7 +179,7 @@ function InviteModal({ serverId }) {
             <Button onClick={copy}>{copied ? 'Copied' : 'Copy'}</Button>
           </div>
         </Field>
-        {(role === 'owner' || role === 'admin') && (
+        {canReset && (
           <button className="link-btn subtle" onClick={() => resetInvite(serverId)}>
             <Icon.Refresh size={14} /> New code
           </button>
@@ -189,49 +191,87 @@ function InviteModal({ serverId }) {
 
 /* ---------------- Channels ---------------- */
 
-function CreateChannelModal({ serverId, type: initialType = 'text' }) {
-  const [type, setType] = useState(initialType);
+function CreateChannelModal({ serverId, type: initialType = 'text', parentId: initialParent = null }) {
+  const isCategory = initialType === 'category';
+  const [type, setType] = useState(isCategory ? 'category' : initialType);
   const [name, setName] = useState('');
+  const [isPrivate, setPrivate] = useState(false);
+  const [allowRoles, setAllowRoles] = useState([]);
   const [busy, setBusy] = useState(false);
+  const roles = useStore((s) => (s.roles[serverId] || []).filter((r) => r.id !== serverId));
+  const parent = useStore((s) => (initialParent ? s.channels[initialParent] : null));
+  const isText = type === 'text' || type === 'announcement';
+
   const create = async (close) => {
     if (!name.trim()) return;
     setBusy(true);
     try {
-      const ch = await createChannel(serverId, name, type);
+      const ch = await createChannel(serverId, { name, type, parentId: parent?.id || null, private: isPrivate, allowRoles });
       close();
-      selectChannel(serverId, ch.id);
+      if (type !== 'category') selectChannel(serverId, ch.id);
     } catch {
       setBusy(false);
     }
   };
+
+  const types = [
+    ['text', Icon.Hash, 'Text'],
+    ['voice', Icon.Speaker, 'Voice'],
+    ['announcement', Icon.Megaphone, 'Announcement'],
+  ];
+
   return (
     <Modal size="sm">
       {(close) => (
         <div className="modal-body">
-          <h2>Create channel</h2>
-          <div className="type-cards">
-            {[['text', Icon.Hash, 'Text'], ['voice', Icon.Speaker, 'Voice']].map(([t, I, label]) => (
-              <button key={t} className={`type-card${type === t ? ' active' : ''}`} onClick={() => setType(t)}>
-                <I size={22} />
-                <span>{label}</span>
-                <span className="radio" />
-              </button>
-            ))}
-          </div>
-          <Field label="Channel name">
+          <h2>{isCategory ? 'Create category' : 'Create channel'}</h2>
+          {parent && <span className="modal-sub">in {parent.name}</span>}
+          {!isCategory && (
+            <div className="type-cards">
+              {types.map(([t, I, label]) => (
+                <button key={t} className={`type-card${type === t ? ' active' : ''}`} onClick={() => setType(t)}>
+                  <I size={22} />
+                  <span>{label}</span>
+                  <span className="radio" />
+                </button>
+              ))}
+            </div>
+          )}
+          <Field label={isCategory ? 'Category name' : 'Channel name'}>
             <div className="input-icon">
-              {type === 'text' ? <Icon.Hash size={17} /> : <Icon.Speaker size={17} />}
+              {isCategory ? <Icon.Folder size={17} /> : type === 'voice' ? <Icon.Speaker size={17} /> : type === 'announcement' ? <Icon.Megaphone size={17} /> : <Icon.Hash size={17} />}
               <input
                 className="input"
                 autoFocus
                 value={name}
                 maxLength={100}
-                placeholder={type === 'text' ? 'new-channel' : 'Hangout'}
-                onChange={(e) => setName(type === 'text' ? e.target.value.toLowerCase().replace(/\s+/g, '-') : e.target.value)}
+                placeholder={isCategory ? 'New category' : isText ? 'new-channel' : 'Hangout'}
+                onChange={(e) => setName(isText ? e.target.value.toLowerCase().replace(/\s+/g, '-') : e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && create(close)}
               />
             </div>
           </Field>
+          <div className="switch-row">
+            <span><Icon.Lock size={15} className="inline-icon" /> Private {isCategory ? 'category' : 'channel'}</span>
+            <Switch checked={isPrivate} onChange={setPrivate} />
+          </div>
+          {isPrivate && roles.length > 0 && (
+            <Field label="Who can see it">
+              <div className="pick-list roles">
+                {roles.map((r) => (
+                  <button
+                    key={r.id}
+                    className={`role-pick${allowRoles.includes(r.id) ? ' on' : ''}`}
+                    onClick={() => setAllowRoles((list) => (list.includes(r.id) ? list.filter((x) => x !== r.id) : [...list, r.id]))}
+                  >
+                    <span className="role-dot" style={{ background: r.color || 'var(--text-3)' }} />
+                    <span className="role-pick-name">{r.name}</span>
+                    <span className="role-check">{allowRoles.includes(r.id) && <Icon.Check size={14} strokeWidth={2.6} />}</span>
+                  </button>
+                ))}
+              </div>
+            </Field>
+          )}
           <div className="modal-footer">
             <Button variant="ghost" onClick={close}>Cancel</Button>
             <Button loading={busy} disabled={!name.trim()} onClick={() => create(close)}>Create</Button>
@@ -242,46 +282,26 @@ function CreateChannelModal({ serverId, type: initialType = 'text' }) {
   );
 }
 
-function ChannelSettingsModal({ channelId }) {
-  const channel = useStore((s) => s.channels[channelId]);
-  const [name, setName] = useState(channel?.name || '');
-  const [topic, setTopic] = useState(channel?.topic || '');
-  const [busy, setBusy] = useState(false);
-  if (!channel) return null;
-  const save = async (close) => {
-    setBusy(true);
-    try {
-      await updateChannel(channelId, { name, ...(channel.type === 'text' ? { topic } : {}) });
-      close();
-    } catch {
-      setBusy(false);
-    }
+function NicknameModal({ serverId, userId = null }) {
+  const me = useStore((s) => s.me);
+  const target = userId || me.id;
+  const user = useStore((s) => s.users[target]);
+  const member = useStore((s) => s.members[serverId]?.[target]);
+  const [value, setValue] = useState(member?.nickname || '');
+  const save = async (close, nick) => {
+    try { await setNickname(serverId, nick, userId); close(); } catch { /* toast shown */ }
   };
   return (
     <Modal size="sm">
       {(close) => (
         <div className="modal-body">
-          <h2>Edit channel</h2>
-          <Field label="Channel name">
-            <input className="input" autoFocus value={name} maxLength={100} onChange={(e) => setName(channel.type === 'text' ? e.target.value.toLowerCase().replace(/\s+/g, '-') : e.target.value)} />
+          <h2>{target === me.id ? 'Change nickname' : `Nickname for ${user?.displayName}`}</h2>
+          <Field label="Nickname">
+            <input className="input" autoFocus value={value} maxLength={32} placeholder={user?.displayName} onChange={(e) => setValue(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && save(close, value)} />
           </Field>
-          {channel.type === 'text' && (
-            <Field label="Topic">
-              <textarea className="input textarea" value={topic} maxLength={1024} rows={3} onChange={(e) => setTopic(e.target.value)} />
-            </Field>
-          )}
-          <div className="modal-footer spread">
-            <Button variant="danger-ghost" onClick={() => openModal('confirm', {
-              title: `Delete ${channel.type === 'text' ? '#' : ''}${channel.name}`,
-              body: 'This cannot be undone.',
-              confirm: 'Delete channel',
-              danger: true,
-              onConfirm: async () => { await deleteChannel(channelId); close(); },
-            })}>Delete</Button>
-            <div className="footer-group">
-              <Button variant="ghost" onClick={close}>Cancel</Button>
-              <Button loading={busy} disabled={!name.trim()} onClick={() => save(close)}>Save</Button>
-            </div>
+          <div className="modal-footer">
+            <Button variant="ghost" onClick={() => save(close, '')}>Reset</Button>
+            <Button onClick={() => save(close, value)}>Save</Button>
           </div>
         </div>
       )}
@@ -289,21 +309,44 @@ function ChannelSettingsModal({ channelId }) {
   );
 }
 
-function NicknameModal({ serverId }) {
-  const me = useStore((s) => s.me);
-  const member = useStore((s) => s.members[serverId]?.[s.me.id]);
-  const [value, setValue] = useState(member?.nickname || '');
+function AddRoleMembersModal({ serverId, roleId }) {
+  const members = useStore((s) => s.members[serverId] || {});
+  const users = useStore((s) => s.users);
+  const role = useStore((s) => (s.roles[serverId] || []).find((r) => r.id === roleId));
+  const [q, setQ] = useState('');
+  const [picked, setPicked] = useState([]);
+  const [busy, setBusy] = useState(false);
+  const list = Object.values(members)
+    .filter((m) => !m.roles?.includes(roleId))
+    .map((m) => ({ m, u: users[m.userId] }))
+    .filter((x) => x.u && `${x.u.displayName} ${x.u.username}`.toLowerCase().includes(q.toLowerCase()));
+  const add = async (close) => {
+    setBusy(true);
+    for (const id of picked) {
+      await setMemberRoles(serverId, id, [...(members[id]?.roles || []), roleId]).catch(() => {});
+    }
+    close();
+  };
   return (
     <Modal size="sm">
       {(close) => (
         <div className="modal-body">
-          <h2>Change nickname</h2>
-          <Field label="Nickname">
-            <input className="input" autoFocus value={value} maxLength={32} placeholder={me.displayName} onChange={(e) => setValue(e.target.value)} onKeyDown={async (e) => { if (e.key === 'Enter') { await setNickname(serverId, value); close(); } }} />
-          </Field>
+          <h2>Add members to <span style={{ color: role?.color || undefined }}>{role?.name}</span></h2>
+          <input className="input" autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search members" />
+          <div className="pick-list">
+            {list.map(({ m, u }) => (
+              <button key={u.id} className={`pick-row${picked.includes(u.id) ? ' picked' : ''}`} onClick={() => setPicked((p) => (p.includes(u.id) ? p.filter((x) => x !== u.id) : [...p, u.id]))}>
+                <Avatar user={u} size={28} decorate={false} />
+                <span className="pick-name">{displayName(u, m)}</span>
+                <span className="pick-sub">@{u.username}</span>
+                <span className="role-check">{picked.includes(u.id) && <Icon.Check size={15} strokeWidth={2.6} />}</span>
+              </button>
+            ))}
+            {!list.length && <div className="pick-empty">Everyone already has this role</div>}
+          </div>
           <div className="modal-footer">
-            <Button variant="ghost" onClick={async () => { await setNickname(serverId, ''); close(); }}>Reset</Button>
-            <Button onClick={async () => { await setNickname(serverId, value); close(); }}>Save</Button>
+            <Button variant="ghost" onClick={close}>Cancel</Button>
+            <Button loading={busy} disabled={!picked.length} onClick={() => add(close)}>Add</Button>
           </div>
         </div>
       )}
@@ -534,6 +577,7 @@ export const MODALS = {
   invite: InviteModal,
   createChannel: CreateChannelModal,
   channelSettings: ChannelSettingsModal,
+  addRoleMembers: AddRoleMembersModal,
   nickname: NicknameModal,
   confirm: ConfirmModal,
   image: ImageModal,

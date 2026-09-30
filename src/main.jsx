@@ -8,5 +8,6 @@ import './styles/chat.css';
 import './styles/voice.css';
 import './styles/modals.css';
 import './styles/themes.css';
+import './styles/features.css';
 
 createRoot(document.getElementById('root')).render(<App />);

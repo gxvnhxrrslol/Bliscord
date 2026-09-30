@@ -4,6 +4,7 @@ import { assetUrl, uploadFile } from '../lib/api';
 import { colorFor, initials } from '../lib/format';
 import { closeModal } from '../lib/actions';
 import Icon from './Icons';
+import { Decoration } from './Cosmetics';
 
 /* ---------------- Status indicator ---------------- */
 
@@ -27,7 +28,8 @@ export function StatusDot({ status = 'offline', size = 10, className = '' }) {
 
 /* ---------------- Avatar ---------------- */
 
-export function Avatar({ user, size = 40, status, speaking = false, className = '', onClick, square = false }) {
+export function Avatar({ user, size = 40, status, speaking = false, className = '', onClick, square = false, decorate = true }) {
+  const decoration = decorate && size >= 20 ? user?.profile?.decoration : null;
   const src = assetUrl(user?.avatar);
   const dot = status ? Math.max(10, Math.round(size * 0.3)) : 0;
   const gap = size >= 64 ? 4 : 2.5;
@@ -45,6 +47,7 @@ export function Avatar({ user, size = 40, status, speaking = false, className = 
       <div className="avatar-img" style={{ WebkitMaskImage: mask, maskImage: mask, background: src ? undefined : user?.accentColor || colorFor(user?.id) }}>
         {src ? <img src={src} alt="" draggable={false} /> : <span style={{ fontSize: size * 0.38 }}>{initials(user?.displayName || user?.username)}</span>}
       </div>
+      {decoration && <Decoration id={decoration} />}
       {status && (
         <span className="avatar-status" style={{ right: inset, bottom: inset }}>
           <StatusDot status={status} size={dot} />

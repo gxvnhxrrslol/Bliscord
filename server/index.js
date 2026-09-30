@@ -9,6 +9,9 @@ import bcrypt from 'bcryptjs';
 import { Server } from 'socket.io';
 import { q, tx, newId, newInviteCode, UPLOAD_DIR } from './db.js';
 import { getIceServers, turnConfigured } from './ice.js';
+import {
+  ALL, CHANNEL_SCOPED, DEFAULT_EVERYONE, P, computePermissions, has, topPosition,
+} from '../shared/permissions.js';
 
 const PORT = Number(process.env.PORT || 3000);
 const WEB_DIR = path.resolve(process.env.WEB_DIR || path.join(import.meta.dirname, '..', 'dist'));
@@ -17,6 +20,7 @@ const MAX_UPLOAD = Number(process.env.MAX_UPLOAD_MB || 25) * 1024 * 1024;
 class ApiError extends Error {}
 const fail = (message) => { throw new ApiError(message); };
 const now = () => Date.now();
+const NO_PERMISSION = 'You do not have permission to do that';
 
 /* ------------------------------------------------------------------ */
 /* Presence                                                            */
@@ -33,10 +37,19 @@ function presenceOf(row) {
 }
 
 /* ------------------------------------------------------------------ */
-/* Serializers                                                         */
+/* Users                                                               */
 /* ------------------------------------------------------------------ */
 
 const getUserRow = (id) => q('SELECT * FROM users WHERE id = ?').get(id);
+
+const DECORATIONS = ['glow', 'orbit', 'rainbow', 'neon', 'sparkle', 'flame', 'frost', 'crown'];
+const EFFECTS = ['stars', 'aurora', 'snow', 'bubbles', 'confetti'];
+const NAME_STYLES = ['gradient', 'glow', 'shimmer', 'rainbow'];
+const COLOR_RE = /^#[0-9a-f]{6}$/i;
+
+function parseJson(text, fallback) {
+  try { return JSON.parse(text || ''); } catch { return fallback; }
+}
 
 function publicUser(row) {
   if (!row) return null;
@@ -51,7 +64,8 @@ function publicUser(row) {
     bio: row.bio,
     pronouns: row.pronouns,
     customStatus: row.custom_status,
-    badges: JSON.parse(row.badges || '[]'),
+    badges: parseJson(row.badges, []),
+    profile: parseJson(row.profile, {}),
     createdAt: row.created_at,
     presence: presenceOf(row),
   };
@@ -61,7 +75,79 @@ function selfUser(row) {
   return { ...publicUser(row), email: row.email, status: row.status };
 }
 
-function serializeServer(s) {
+function sanitizeProfile(p) {
+  if (!p || typeof p !== 'object') return {};
+  const out = {};
+  if (Array.isArray(p.themeColors) && p.themeColors.length === 2 && p.themeColors.every((c) => COLOR_RE.test(c))) out.themeColors = p.themeColors;
+  if (DECORATIONS.includes(p.decoration)) out.decoration = p.decoration;
+  if (EFFECTS.includes(p.effect)) out.effect = p.effect;
+  if (NAME_STYLES.includes(p.nameStyle)) out.nameStyle = p.nameStyle;
+  return out;
+}
+
+/* ------------------------------------------------------------------ */
+/* Server context & permissions                                        */
+/* ------------------------------------------------------------------ */
+
+/** Loads everything needed to answer permission questions for one server. */
+function serverCtx(serverId) {
+  const row = q('SELECT * FROM servers WHERE id = ?').get(String(serverId || ''));
+  if (!row) return null;
+  const roles = q('SELECT * FROM roles WHERE server_id = ? ORDER BY position DESC').all(row.id);
+  const memberRoles = new Map();
+  for (const r of q('SELECT user_id, role_id FROM member_roles WHERE server_id = ?').all(row.id)) {
+    if (!memberRoles.has(r.user_id)) memberRoles.set(r.user_id, []);
+    memberRoles.get(r.user_id).push(r.role_id);
+  }
+  const channels = new Map(q('SELECT * FROM channels WHERE server_id = ? ORDER BY position, created_at').all(row.id).map((c) => [c.id, c]));
+  const overwrites = new Map();
+  for (const o of q('SELECT o.* FROM overwrites o JOIN channels c ON c.id = o.channel_id WHERE c.server_id = ?').all(row.id)) {
+    if (!overwrites.has(o.channel_id)) overwrites.set(o.channel_id, []);
+    overwrites.get(o.channel_id).push({ id: o.target_id, type: o.type, allow: o.allow, deny: o.deny });
+  }
+  const memberIds = q('SELECT user_id FROM members WHERE server_id = ?').all(row.id).map((m) => m.user_id);
+  const perm = {
+    ownerId: row.owner_id,
+    everyoneId: row.id,
+    roles: roles.map((r) => ({ id: r.id, permissions: r.permissions, position: r.position })),
+    memberRoles: (uid) => memberRoles.get(uid) || [],
+    channel: (id) => {
+      const c = channels.get(id);
+      return c ? { parentId: c.parent_id, synced: Boolean(c.synced), overwrites: overwrites.get(id) || [] } : null;
+    },
+  };
+  return { row, roles, memberRoles, channels, overwrites, memberIds, perm };
+}
+
+const permsOf = (ctx, uid, channelId = null) => computePermissions(ctx.perm, uid, channelId);
+const isMember = (ctx, uid) => ctx.memberIds.includes(uid);
+
+function requireCtx(serverId, uid) {
+  const ctx = serverCtx(serverId);
+  if (!ctx || !isMember(ctx, uid)) fail('Server not found');
+  return ctx;
+}
+
+function requirePerm(ctx, uid, flag, channelId = null) {
+  if (!has(permsOf(ctx, uid, channelId), flag)) fail(NO_PERMISSION);
+}
+
+function canView(ctx, uid, channel) {
+  if (channel.type !== 'category') return has(permsOf(ctx, uid, channel.id), P.VIEW_CHANNEL);
+  if (has(permsOf(ctx, uid, channel.id), P.VIEW_CHANNEL)) return true;
+  for (const c of ctx.channels.values()) if (c.parent_id === channel.id && has(permsOf(ctx, uid, c.id), P.VIEW_CHANNEL)) return true;
+  return false;
+}
+
+function channelViewers(ctx, channelId) {
+  return ctx.memberIds.filter((uid) => has(permsOf(ctx, uid, channelId), P.VIEW_CHANNEL));
+}
+
+/* ------------------------------------------------------------------ */
+/* Serializers                                                         */
+/* ------------------------------------------------------------------ */
+
+function serializeServer(s, { includeInvite = true } = {}) {
   return {
     id: s.id,
     name: s.name,
@@ -69,7 +155,10 @@ function serializeServer(s) {
     banner: s.banner,
     description: s.description,
     ownerId: s.owner_id,
-    inviteCode: s.invite_code,
+    inviteCode: includeInvite ? s.invite_code : null,
+    systemChannelId: s.system_channel_id,
+    rulesChannelId: s.rules_channel_id,
+    joinMessages: Boolean(s.join_messages),
     createdAt: s.created_at,
   };
 }
@@ -78,7 +167,9 @@ function lastMessageId(channelId) {
   return q('SELECT id FROM messages WHERE channel_id = ? ORDER BY id DESC LIMIT 1').get(channelId)?.id || null;
 }
 
-function serializeChannel(c) {
+const isTextType = (type) => type === 'text' || type === 'announcement';
+
+function serializeChannel(c, ctx) {
   return {
     id: c.id,
     serverId: c.server_id,
@@ -86,19 +177,40 @@ function serializeChannel(c) {
     type: c.type,
     topic: c.topic,
     position: c.position,
-    lastMessageId: c.type === 'text' ? lastMessageId(c.id) : null,
+    parentId: c.parent_id,
+    synced: Boolean(c.synced),
+    slowmode: c.slowmode,
+    userLimit: c.user_limit,
+    overwrites: ctx.overwrites.get(c.id) || [],
+    lastMessageId: isTextType(c.type) ? lastMessageId(c.id) : null,
   };
 }
 
-function serializeMember(m) {
-  return { userId: m.user_id, nickname: m.nickname, role: m.role, joinedAt: m.joined_at };
+function serializeRole(r) {
+  return {
+    id: r.id,
+    serverId: r.server_id,
+    name: r.name,
+    color: r.color,
+    hoist: Boolean(r.hoist),
+    mentionable: Boolean(r.mentionable),
+    permissions: r.permissions,
+    position: r.position,
+  };
 }
 
-function serializeServerFull(s) {
+function serializeMember(m, ctx) {
+  return { userId: m.user_id, nickname: m.nickname, joinedAt: m.joined_at, roles: ctx.memberRoles.get(m.user_id) || [] };
+}
+
+/** Everything one member is allowed to see about a server. */
+function serverPayloadFor(ctx, uid) {
+  const channels = [...ctx.channels.values()].filter((c) => canView(ctx, uid, c)).map((c) => serializeChannel(c, ctx));
   return {
-    ...serializeServer(s),
-    channels: q('SELECT * FROM channels WHERE server_id = ? ORDER BY position, created_at').all(s.id).map(serializeChannel),
-    members: q('SELECT * FROM members WHERE server_id = ? ORDER BY joined_at').all(s.id).map(serializeMember),
+    ...serializeServer(ctx.row, { includeInvite: has(permsOf(ctx, uid), P.CREATE_INVITE) }),
+    channels,
+    roles: ctx.roles.map(serializeRole),
+    members: q('SELECT * FROM members WHERE server_id = ? ORDER BY joined_at').all(ctx.row.id).map((m) => serializeMember(m, ctx)),
   };
 }
 
@@ -126,6 +238,7 @@ function serializeMessage(m) {
     authorId: m.author_id,
     content: m.content,
     attachments: JSON.parse(m.attachments),
+    mentions: parseJson(m.mentions, {}),
     replyTo,
     kind: m.kind,
     editedAt: m.edited_at,
@@ -157,26 +270,23 @@ function isBlockedEitherWay(a, b) {
   return relationship(a, b) === 'blocked' || relationship(b, a) === 'blocked';
 }
 
-function memberRole(serverId, uid) {
-  return q('SELECT role FROM members WHERE server_id = ? AND user_id = ?').get(serverId, uid)?.role || null;
-}
-
-function requireManager(serverId, uid) {
-  const role = memberRole(serverId, uid);
-  if (role !== 'owner' && role !== 'admin') fail('You do not have permission to do that');
-  return role;
-}
-
-function channelAccess(uid, channelId) {
+/**
+ * Resolves a channel or DM id and checks access.
+ * For server channels `need` is the permission required (VIEW_CHANNEL by default).
+ */
+function channelAccess(uid, channelId, need = P.VIEW_CHANNEL) {
   const channel = q('SELECT * FROM channels WHERE id = ?').get(String(channelId || ''));
   if (channel) {
-    const role = memberRole(channel.server_id, uid);
-    if (!role) fail('You do not have access to this channel');
-    return { kind: 'channel', channel, role };
+    const ctx = serverCtx(channel.server_id);
+    if (!ctx || !isMember(ctx, uid)) fail('You do not have access to this channel');
+    const perms = permsOf(ctx, uid, channel.id);
+    if (!has(perms, P.VIEW_CHANNEL)) fail('You do not have access to this channel');
+    if (need && !has(perms, need)) fail(NO_PERMISSION);
+    return { kind: 'channel', channel, ctx, perms };
   }
   const dm = q('SELECT * FROM dms WHERE id = ?').get(String(channelId || ''));
   if (dm && (dm.user_a === uid || dm.user_b === uid)) {
-    return { kind: 'dm', dm, otherId: dm.user_a === uid ? dm.user_b : dm.user_a };
+    return { kind: 'dm', dm, otherId: dm.user_a === uid ? dm.user_b : dm.user_a, perms: ALL };
   }
   fail('Channel not found');
 }
@@ -187,7 +297,6 @@ function channelAccess(uid, channelId) {
 
 const USERNAME_RE = /^[a-z0-9_.]{2,32}$/;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const COLOR_RE = /^#[0-9a-f]{6}$/i;
 
 function str(v, max, { trim = true } = {}) {
   if (v === undefined || v === null) return '';
@@ -212,6 +321,20 @@ function sanitizeAttachments(list) {
     width: Number(a?.width) || undefined,
     height: Number(a?.height) || undefined,
   })).filter((a) => a.url);
+}
+
+const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/** Which @everyone / @role mentions in a message actually ping. */
+function computeMentions(access, uid, text) {
+  if (access.kind !== 'channel' || !text.includes('@')) return {};
+  const canAll = has(access.perms, P.MENTION_EVERYONE);
+  const out = {};
+  if (canAll && /(^|[^\w])@(everyone|here)(?![\w])/i.test(text)) out.everyone = true;
+  const roles = access.ctx.roles.filter((r) => r.id !== access.ctx.row.id && (r.mentionable || canAll)
+    && new RegExp(`(^|[^\\w])@${escapeRe(r.name)}(?![\\w])`, 'i').test(text)).map((r) => r.id);
+  if (roles.length) out.roles = roles;
+  return out;
 }
 
 /* ------------------------------------------------------------------ */
@@ -303,7 +426,7 @@ const upload = multer({
   limits: { fileSize: MAX_UPLOAD, files: 1 },
 });
 
-app.post('/api/upload', (req, res, next) => {
+app.post('/api/upload', (req, res) => {
   const uid = authFromHeader(req);
   if (!uid) return res.status(401).json({ error: 'Unauthorized' });
   try { rateLimit('up:' + uid, 60, 60 * 1000); } catch (e) { return res.status(429).json({ error: e.message }); }
@@ -371,7 +494,7 @@ function broadcastUser(uid) {
 }
 
 function emitToChannel(access, event, payload) {
-  if (access.kind === 'channel') io.to('server:' + access.channel.server_id).emit(event, payload);
+  if (access.kind === 'channel') toUsers(channelViewers(access.ctx, access.channel.id), event, payload);
   else toUsers([access.dm.user_a, access.dm.user_b], event, payload);
 }
 
@@ -387,17 +510,20 @@ function publicVoiceState(s) {
   return rest;
 }
 
-function roomTarget(roomId) {
+/** Who should see the participant list of a voice room. */
+function roomAudience(roomId) {
   const channel = q('SELECT server_id FROM channels WHERE id = ?').get(roomId);
-  if (channel) return io.to('server:' + channel.server_id);
+  if (channel) {
+    const ctx = serverCtx(channel.server_id);
+    return ctx ? channelViewers(ctx, roomId) : [];
+  }
   const dm = q('SELECT user_a, user_b FROM dms WHERE id = ?').get(roomId);
-  if (dm) return io.to(['user:' + dm.user_a, 'user:' + dm.user_b]);
-  return null;
+  return dm ? [dm.user_a, dm.user_b] : [];
 }
 
 function emitVoice(roomId) {
   const states = [...(voiceRooms.get(roomId)?.values() || [])].map(publicVoiceState);
-  roomTarget(roomId)?.emit('voice:update', { roomId, states });
+  toUsers(roomAudience(roomId), 'voice:update', { roomId, states });
 }
 
 function leaveVoice(socket, { notify = true } = {}) {
@@ -415,15 +541,33 @@ function leaveVoice(socket, { notify = true } = {}) {
   if (dm && !voiceRooms.has(roomId)) toUsers([dm.user_a, dm.user_b], 'call:end', { roomId });
 }
 
+function disconnectFromVoice(state, roomId) {
+  const sock = io.sockets.sockets.get(state.socketId);
+  if (sock) {
+    leaveVoice(sock);
+    sock.emit('voice:kicked', { roomId });
+  } else {
+    voiceRooms.get(roomId)?.delete(state.userId);
+    emitVoice(roomId);
+  }
+}
+
 function kickRoom(roomId) {
   const room = voiceRooms.get(roomId);
   if (!room) return;
-  for (const s of room.values()) {
-    const sock = io.sockets.sockets.get(s.socketId);
-    if (sock) { leaveVoice(sock, { notify: false }); sock.emit('voice:kicked', { roomId }); }
-  }
+  for (const s of [...room.values()]) disconnectFromVoice(s, roomId);
   voiceRooms.delete(roomId);
-  emitVoice(roomId);
+}
+
+/** After permissions change, remove anyone who can no longer be in a server's voice channels. */
+function enforceVoice(ctx) {
+  for (const [roomId, room] of voiceRooms) {
+    if (!ctx.channels.has(roomId)) continue;
+    for (const s of [...room.values()]) {
+      const perms = permsOf(ctx, s.userId, roomId);
+      if (!has(perms, P.CONNECT)) disconnectFromVoice(s, roomId);
+    }
+  }
 }
 
 function kickUserFromServerVoice(uid, serverId) {
@@ -431,9 +575,7 @@ function kickUserFromServerVoice(uid, serverId) {
     const s = room.get(uid);
     if (!s) continue;
     const ch = q('SELECT server_id FROM channels WHERE id = ?').get(roomId);
-    if (ch?.server_id !== serverId) continue;
-    const sock = io.sockets.sockets.get(s.socketId);
-    if (sock) { leaveVoice(sock); sock.emit('voice:kicked', { roomId }); }
+    if (ch?.server_id === serverId) disconnectFromVoice(s, roomId);
   }
 }
 
@@ -446,12 +588,32 @@ function voiceStatesFor(roomIds) {
   return out;
 }
 
+/* ---------------- Server sync ---------------- */
+
+function serverPacket(ctx, uid) {
+  const server = serverPayloadFor(ctx, uid);
+  const users = server.members.map((m) => publicUser(getUserRow(m.userId))).filter(Boolean);
+  const voice = voiceStatesFor(server.channels.filter((c) => c.type === 'voice').map((c) => c.id));
+  return { server, users, voice };
+}
+
+/** Sends every member (or just `onlyUser`) their current view of a server. */
+function syncServer(serverId, onlyUser = null) {
+  const ctx = serverCtx(serverId);
+  if (!ctx) return;
+  for (const uid of onlyUser ? [onlyUser] : ctx.memberIds) {
+    if (!online.has(uid)) continue;
+    io.to('user:' + uid).emit('server:sync', serverPacket(ctx, uid));
+  }
+  enforceVoice(ctx);
+}
+
 /* ---------------- Ready payload ---------------- */
 
 function buildReady(uid) {
   const me = getUserRow(uid);
-  const servers = q(`SELECT s.* FROM servers s JOIN members m ON m.server_id = s.id WHERE m.user_id = ? ORDER BY m.joined_at`)
-    .all(uid).map(serializeServerFull);
+  const serverIds = q('SELECT server_id FROM members WHERE user_id = ? ORDER BY joined_at').all(uid).map((r) => r.server_id);
+  const servers = serverIds.map((id) => serverCtx(id)).filter(Boolean).map((ctx) => serverPayloadFor(ctx, uid));
   const dms = q('SELECT * FROM dms WHERE user_a = ? OR user_b = ?').all(uid, uid).map((d) => serializeDm(d, uid));
   const relationships = q('SELECT target_id, type FROM relationships WHERE user_id = ?').all(uid)
     .map((r) => ({ id: r.target_id, type: r.type }));
@@ -468,6 +630,47 @@ function buildReady(uid) {
   return { user: selfUser(me), servers, dms, relationships, users, readStates, unreadDm, voice: voiceStatesFor(roomIds) };
 }
 
+// userId:channelId -> time of last message (slowmode)
+const lastSent = new Map();
+
+/* ---------------- Channel helpers ---------------- */
+
+const CHANNEL_TYPES = ['text', 'voice', 'announcement', 'category'];
+
+function normalizeChannelName(name, type) {
+  let n = str(name, 100);
+  if (isTextType(type)) n = n.toLowerCase().replace(/\s+/g, '-').replace(/[^\p{L}\p{N}_-]/gu, '').replace(/-+/g, '-');
+  if (!n) fail('Channel name is required');
+  return n;
+}
+
+function insertChannel(serverId, { name, type, parentId = null, synced = 1 }) {
+  const pos = q('SELECT COALESCE(MAX(position), -1) + 1 AS p FROM channels WHERE server_id = ?').get(serverId).p;
+  const id = newId();
+  q('INSERT INTO channels (id, server_id, name, type, topic, position, parent_id, synced, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(id, serverId, name, type, '', pos, parentId, synced, now());
+  return id;
+}
+
+function setOverwrites(channelId, list) {
+  q('DELETE FROM overwrites WHERE channel_id = ?').run(channelId);
+  for (const o of list) {
+    if (!o.allow && !o.deny) continue;
+    q('INSERT INTO overwrites (channel_id, target_id, type, allow, deny) VALUES (?, ?, ?, ?, ?)')
+      .run(channelId, o.id, o.type, o.allow & CHANNEL_SCOPED, o.deny & CHANNEL_SCOPED);
+  }
+}
+
+function sanitizeOverwrites(ctx, list) {
+  if (!Array.isArray(list)) fail('Invalid permissions');
+  return list.slice(0, 100).map((o) => ({
+    id: String(o?.id || ''),
+    type: o?.type === 'member' ? 'member' : 'role',
+    allow: (Number(o?.allow) || 0) & CHANNEL_SCOPED,
+    deny: (Number(o?.deny) || 0) & CHANNEL_SCOPED,
+  })).filter((o) => (o.type === 'role' ? ctx.roles.some((r) => r.id === o.id) : ctx.memberIds.includes(o.id)));
+}
+
 /* ---------------- Connection ---------------- */
 
 io.on('connection', (socket) => {
@@ -475,7 +678,6 @@ io.on('connection', (socket) => {
   if (!getUserRow(uid)) { socket.disconnect(true); return; }
 
   socket.join('user:' + uid);
-  for (const { server_id } of q('SELECT server_id FROM members WHERE user_id = ?').all(uid)) socket.join('server:' + server_id);
 
   const wasOnline = (online.get(uid)?.size || 0) > 0;
   if (!online.has(uid)) online.set(uid, new Map());
@@ -529,11 +731,12 @@ io.on('connection', (socket) => {
       pronouns: 'pronouns' in p ? str(p.pronouns, 40) : row.pronouns,
       custom_status: 'customStatus' in p ? str(p.customStatus, 128) : row.custom_status,
       status: 'status' in p ? (['online', 'idle', 'dnd', 'invisible'].includes(p.status) ? p.status : row.status) : row.status,
+      profile: 'profile' in p ? JSON.stringify(sanitizeProfile(p.profile)) : row.profile,
     };
     q(`UPDATE users SET display_name = ?, avatar = ?, banner = ?, banner_color = ?, accent_color = ?, bio = ?, pronouns = ?,
-       custom_status = ?, status = ? WHERE id = ?`).run(
+       custom_status = ?, status = ?, profile = ? WHERE id = ?`).run(
       next.display_name, next.avatar, next.banner, next.banner_color, next.accent_color, next.bio, next.pronouns,
-      next.custom_status, next.status, uid,
+      next.custom_status, next.status, next.profile, uid,
     );
     broadcastUser(uid);
     return selfUser(getUserRow(uid));
@@ -577,32 +780,22 @@ io.on('connection', (socket) => {
 
   /* ---------- Servers ---------- */
 
-  function joinServerRooms(userId, serverId) {
-    io.in('user:' + userId).socketsJoin('server:' + serverId);
-  }
-
   function sendServerTo(userId, serverId) {
-    const s = q('SELECT * FROM servers WHERE id = ?').get(serverId);
-    const full = serializeServerFull(s);
-    const users = full.members.map((m) => publicUser(getUserRow(m.userId)));
-    const voice = voiceStatesFor(full.channels.filter((c) => c.type === 'voice').map((c) => c.id));
-    io.to('user:' + userId).emit('server:create', { server: full, users, voice });
-    return full;
+    const ctx = serverCtx(serverId);
+    const packet = serverPacket(ctx, userId);
+    io.to('user:' + userId).emit('server:sync', packet);
+    return packet.server;
   }
 
-  function addChannel(serverId, name, type) {
-    const pos = q('SELECT COALESCE(MAX(position), -1) + 1 AS p FROM channels WHERE server_id = ?').get(serverId).p;
-    const id = newId();
-    q('INSERT INTO channels (id, server_id, name, type, topic, position, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
-      .run(id, serverId, name, type, '', pos, now());
-    return q('SELECT * FROM channels WHERE id = ?').get(id);
+  function emitServerUpdate(ctx) {
+    for (const m of ctx.memberIds) {
+      io.to('user:' + m).emit('server:update', serializeServer(ctx.row, { includeInvite: has(permsOf(ctx, m), P.CREATE_INVITE) }));
+    }
   }
 
-  function normalizeChannelName(name, type) {
-    let n = str(name, 100);
-    if (type === 'text') n = n.toLowerCase().replace(/\s+/g, '-').replace(/[^\p{L}\p{N}_-]/gu, '').replace(/-+/g, '-');
-    if (!n) fail('Channel name is required');
-    return n;
+  function emitMember(ctx, userId) {
+    const row = q('SELECT * FROM members WHERE server_id = ? AND user_id = ?').get(ctx.row.id, userId);
+    if (row) toUsers(ctx.memberIds, 'server:member_update', { serverId: ctx.row.id, member: serializeMember(row, ctx) });
   }
 
   on('server:create', ({ name, icon }) => {
@@ -614,51 +807,65 @@ io.on('connection', (socket) => {
     tx(() => {
       q('INSERT INTO servers (id, name, icon, owner_id, invite_code, created_at) VALUES (?, ?, ?, ?, ?, ?)')
         .run(id, serverName, uploadPath(icon ?? null), uid, newInviteCode(), now());
+      q("INSERT INTO roles (id, server_id, name, permissions, position, created_at) VALUES (?, ?, '@everyone', ?, 0, ?)")
+        .run(id, id, DEFAULT_EVERYONE, now());
       q('INSERT INTO members (server_id, user_id, role, joined_at) VALUES (?, ?, ?, ?)').run(id, uid, 'owner', now());
-      addChannel(id, 'general', 'text');
-      addChannel(id, 'Lounge', 'voice');
+      const textCat = insertChannel(id, { name: 'Text Channels', type: 'category' });
+      const general = insertChannel(id, { name: 'general', type: 'text', parentId: textCat });
+      const voiceCat = insertChannel(id, { name: 'Voice Channels', type: 'category' });
+      insertChannel(id, { name: 'Lounge', type: 'voice', parentId: voiceCat });
+      q('UPDATE servers SET system_channel_id = ? WHERE id = ?').run(general, id);
     });
-    joinServerRooms(uid, id);
     return sendServerTo(uid, id);
   });
 
   on('server:update', (p) => {
-    const s = q('SELECT * FROM servers WHERE id = ?').get(String(p.serverId || ''));
-    if (!s) fail('Server not found');
-    requireManager(s.id, uid);
+    const ctx = requireCtx(p.serverId, uid);
+    requirePerm(ctx, uid, P.MANAGE_SERVER);
+    const s = ctx.row;
     const name = 'name' in p ? str(p.name, 100) : s.name;
     if (!name) fail('Server name is required');
-    q('UPDATE servers SET name = ?, icon = ?, banner = ?, description = ? WHERE id = ?').run(
+    const channelRef = (key, current, types) => {
+      if (!(key in p)) return current;
+      if (!p[key]) return null;
+      const c = ctx.channels.get(String(p[key]));
+      if (!c || !types.includes(c.type)) fail('Pick a text channel');
+      return c.id;
+    };
+    q(`UPDATE servers SET name = ?, icon = ?, banner = ?, description = ?, system_channel_id = ?, rules_channel_id = ?,
+       join_messages = ? WHERE id = ?`).run(
       name,
       'icon' in p ? uploadPath(p.icon) : s.icon,
       'banner' in p ? uploadPath(p.banner) : s.banner,
       'description' in p ? str(p.description, 300) : s.description,
+      channelRef('systemChannelId', s.system_channel_id, ['text', 'announcement']),
+      channelRef('rulesChannelId', s.rules_channel_id, ['text', 'announcement']),
+      'joinMessages' in p ? (p.joinMessages ? 1 : 0) : s.join_messages,
       s.id,
     );
-    const out = serializeServer(q('SELECT * FROM servers WHERE id = ?').get(s.id));
-    io.to('server:' + s.id).emit('server:update', out);
-    return out;
+    const fresh = serverCtx(s.id);
+    emitServerUpdate(fresh);
+    return serializeServer(fresh.row);
   });
 
   on('server:invite_reset', ({ serverId }) => {
-    requireManager(String(serverId || ''), uid);
-    q('UPDATE servers SET invite_code = ? WHERE id = ?').run(newInviteCode(), serverId);
-    const out = serializeServer(q('SELECT * FROM servers WHERE id = ?').get(serverId));
-    io.to('server:' + serverId).emit('server:update', out);
-    return out;
+    const ctx = requireCtx(serverId, uid);
+    requirePerm(ctx, uid, P.MANAGE_SERVER);
+    q('UPDATE servers SET invite_code = ? WHERE id = ?').run(newInviteCode(), ctx.row.id);
+    const fresh = serverCtx(ctx.row.id);
+    emitServerUpdate(fresh);
+    return serializeServer(fresh.row);
   });
 
   on('server:delete', ({ serverId }) => {
-    const s = q('SELECT * FROM servers WHERE id = ?').get(String(serverId || ''));
-    if (!s) fail('Server not found');
-    if (s.owner_id !== uid) fail('Only the owner can delete this server');
-    for (const c of q("SELECT id FROM channels WHERE server_id = ? AND type = 'voice'").all(s.id)) kickRoom(c.id);
+    const ctx = requireCtx(serverId, uid);
+    if (ctx.row.owner_id !== uid) fail('Only the owner can delete this server');
+    for (const c of ctx.channels.values()) if (c.type === 'voice') kickRoom(c.id);
     tx(() => {
-      q('DELETE FROM messages WHERE channel_id IN (SELECT id FROM channels WHERE server_id = ?)').run(s.id);
-      q('DELETE FROM servers WHERE id = ?').run(s.id);
+      q('DELETE FROM messages WHERE channel_id IN (SELECT id FROM channels WHERE server_id = ?)').run(ctx.row.id);
+      q('DELETE FROM servers WHERE id = ?').run(ctx.row.id);
     });
-    io.to('server:' + s.id).emit('server:remove', { serverId: s.id });
-    io.in('server:' + s.id).socketsLeave('server:' + s.id);
+    toUsers(ctx.memberIds, 'server:remove', { serverId: ctx.row.id });
     return true;
   });
 
@@ -673,148 +880,346 @@ io.on('connection', (socket) => {
     if (!s) fail('That invite is invalid or has expired');
     const memberIds = q('SELECT user_id FROM members WHERE server_id = ?').all(s.id).map((r) => r.user_id);
     const onlineCount = memberIds.filter((id) => presenceOf(getUserRow(id)) !== 'offline').length;
-    return { ...serializeServer(s), inviteCode: undefined, memberCount: memberIds.length, onlineCount, joined: memberIds.includes(uid) };
+    return { ...serializeServer(s, { includeInvite: false }), memberCount: memberIds.length, onlineCount, joined: memberIds.includes(uid) };
   });
 
   on('server:join', ({ code }) => {
     const s = q('SELECT * FROM servers WHERE invite_code = ?').get(extractCode(code));
     if (!s) fail('That invite is invalid or has expired');
-    if (memberRole(s.id, uid)) return serializeServerFull(s);
+    if (q('SELECT 1 FROM bans WHERE server_id = ? AND user_id = ?').get(s.id, uid)) fail('You are banned from this server');
+    if (q('SELECT 1 FROM members WHERE server_id = ? AND user_id = ?').get(s.id, uid)) return sendServerTo(uid, s.id);
     q('INSERT INTO members (server_id, user_id, role, joined_at) VALUES (?, ?, ?, ?)').run(s.id, uid, 'member', now());
-    const general = q("SELECT * FROM channels WHERE server_id = ? AND type = 'text' ORDER BY position LIMIT 1").get(s.id);
-    joinServerRooms(uid, s.id);
-    io.to('server:' + s.id).except('user:' + uid).emit('server:member_add', {
-      serverId: s.id,
-      member: serializeMember(q('SELECT * FROM members WHERE server_id = ? AND user_id = ?').get(s.id, uid)),
-      user: publicUser(getUserRow(uid)),
-    });
-    if (general) {
-      const id = newId();
-      q("INSERT INTO messages (id, channel_id, author_id, content, kind, created_at) VALUES (?, ?, ?, '', 'join', ?)").run(id, general.id, uid, now());
-      io.to('server:' + s.id).emit('message:new', serializeMessage(q('SELECT * FROM messages WHERE id = ?').get(id)));
+    const ctx = serverCtx(s.id);
+    const member = serializeMember(q('SELECT * FROM members WHERE server_id = ? AND user_id = ?').get(s.id, uid), ctx);
+    toUsers(ctx.memberIds.filter((id) => id !== uid), 'server:member_add', { serverId: s.id, member, user: publicUser(getUserRow(uid)) });
+    const packet = sendServerTo(uid, s.id);
+    if (s.join_messages) {
+      const target = ctx.channels.get(s.system_channel_id)
+        || [...ctx.channels.values()].find((c) => c.type === 'text');
+      if (target) {
+        const id = newId();
+        q("INSERT INTO messages (id, channel_id, author_id, content, kind, created_at) VALUES (?, ?, ?, '', 'join', ?)").run(id, target.id, uid, now());
+        toUsers(channelViewers(ctx, target.id), 'message:new', serializeMessage(q('SELECT * FROM messages WHERE id = ?').get(id)));
+      }
     }
-    return sendServerTo(uid, s.id);
+    return packet;
   });
 
-  function removeMember(serverId, userId) {
+  function removeMember(ctx, userId) {
+    const serverId = ctx.row.id;
     kickUserFromServerVoice(userId, serverId);
-    q('DELETE FROM members WHERE server_id = ? AND user_id = ?').run(serverId, userId);
+    tx(() => {
+      q('DELETE FROM member_roles WHERE server_id = ? AND user_id = ?').run(serverId, userId);
+      q("DELETE FROM overwrites WHERE target_id = ? AND type = 'member' AND channel_id IN (SELECT id FROM channels WHERE server_id = ?)").run(userId, serverId);
+      q('DELETE FROM members WHERE server_id = ? AND user_id = ?').run(serverId, userId);
+    });
     io.to('user:' + userId).emit('server:remove', { serverId });
-    io.in('user:' + userId).socketsLeave('server:' + serverId);
-    io.to('server:' + serverId).emit('server:member_remove', { serverId, userId });
+    toUsers(ctx.memberIds.filter((id) => id !== userId), 'server:member_remove', { serverId, userId });
+  }
+
+  /** Can `uid` act on `targetId` (kick, ban, change roles)? The owner outranks everyone. */
+  function outranks(ctx, targetId) {
+    if (targetId === ctx.row.owner_id) return false;
+    return topPosition(ctx.perm, uid) > topPosition(ctx.perm, targetId);
   }
 
   on('server:leave', ({ serverId }) => {
-    const role = memberRole(String(serverId || ''), uid);
-    if (!role) fail('You are not in this server');
-    if (role === 'owner') fail('Transfer or delete the server before leaving');
-    removeMember(serverId, uid);
+    const ctx = requireCtx(serverId, uid);
+    if (ctx.row.owner_id === uid) fail('Transfer or delete the server before leaving');
+    removeMember(ctx, uid);
     return true;
   });
 
   on('server:kick', ({ serverId, userId }) => {
-    const myRole = requireManager(String(serverId || ''), uid);
-    const theirRole = memberRole(serverId, String(userId || ''));
-    if (!theirRole) fail('That user is not in this server');
-    if (theirRole === 'owner' || (theirRole === 'admin' && myRole !== 'owner')) fail('You cannot kick that member');
-    removeMember(serverId, userId);
+    const ctx = requireCtx(serverId, uid);
+    requirePerm(ctx, uid, P.KICK_MEMBERS);
+    const target = String(userId || '');
+    if (!isMember(ctx, target)) fail('That user is not in this server');
+    if (!outranks(ctx, target)) fail('You cannot kick that member');
+    removeMember(ctx, target);
     return true;
   });
 
-  on('member:role', ({ serverId, userId, role }) => {
-    const s = q('SELECT * FROM servers WHERE id = ?').get(String(serverId || ''));
-    if (!s || s.owner_id !== uid) fail('Only the owner can change roles');
-    if (userId === uid) fail('You cannot change your own role');
-    if (!['admin', 'member'].includes(role)) fail('Invalid role');
-    if (!memberRole(s.id, userId)) fail('That user is not in this server');
-    q('UPDATE members SET role = ? WHERE server_id = ? AND user_id = ?').run(role, s.id, userId);
-    const member = serializeMember(q('SELECT * FROM members WHERE server_id = ? AND user_id = ?').get(s.id, userId));
-    io.to('server:' + s.id).emit('server:member_update', { serverId: s.id, member });
-    return member;
+  on('server:ban', ({ serverId, userId, reason }) => {
+    const ctx = requireCtx(serverId, uid);
+    requirePerm(ctx, uid, P.BAN_MEMBERS);
+    const target = String(userId || '');
+    if (target === uid || !getUserRow(target)) fail('User not found');
+    if (isMember(ctx, target) && !outranks(ctx, target)) fail('You cannot ban that member');
+    q(`INSERT INTO bans (server_id, user_id, reason, banned_by, created_at) VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT (server_id, user_id) DO UPDATE SET reason = excluded.reason`).run(ctx.row.id, target, str(reason, 300), uid, now());
+    if (isMember(ctx, target)) removeMember(ctx, target);
+    return true;
   });
 
-  on('member:nickname', ({ serverId, nickname }) => {
-    if (!memberRole(String(serverId || ''), uid)) fail('You are not in this server');
-    q('UPDATE members SET nickname = ? WHERE server_id = ? AND user_id = ?').run(str(nickname, 32) || null, serverId, uid);
-    const member = serializeMember(q('SELECT * FROM members WHERE server_id = ? AND user_id = ?').get(serverId, uid));
-    io.to('server:' + serverId).emit('server:member_update', { serverId, member });
-    return member;
+  on('server:unban', ({ serverId, userId }) => {
+    const ctx = requireCtx(serverId, uid);
+    requirePerm(ctx, uid, P.BAN_MEMBERS);
+    q('DELETE FROM bans WHERE server_id = ? AND user_id = ?').run(ctx.row.id, String(userId || ''));
+    return true;
+  });
+
+  on('server:bans', ({ serverId }) => {
+    const ctx = requireCtx(serverId, uid);
+    requirePerm(ctx, uid, P.BAN_MEMBERS);
+    return q('SELECT * FROM bans WHERE server_id = ? ORDER BY created_at DESC').all(ctx.row.id).map((b) => ({
+      user: publicUser(getUserRow(b.user_id)), reason: b.reason, createdAt: b.created_at,
+    })).filter((b) => b.user);
+  });
+
+  on('member:nickname', ({ serverId, userId, nickname }) => {
+    const ctx = requireCtx(serverId, uid);
+    const target = userId ? String(userId) : uid;
+    if (!isMember(ctx, target)) fail('That user is not in this server');
+    if (target === uid) requirePerm(ctx, uid, P.CHANGE_NICKNAME);
+    else {
+      requirePerm(ctx, uid, P.MANAGE_NICKNAMES);
+      if (!outranks(ctx, target)) fail(NO_PERMISSION);
+    }
+    q('UPDATE members SET nickname = ? WHERE server_id = ? AND user_id = ?').run(str(nickname, 32) || null, ctx.row.id, target);
+    emitMember(ctx, target);
+    return true;
   });
 
   on('server:transfer', ({ serverId, userId }) => {
-    const s = q('SELECT * FROM servers WHERE id = ?').get(String(serverId || ''));
-    if (!s || s.owner_id !== uid) fail('Only the owner can transfer the server');
-    if (!memberRole(s.id, String(userId || '')) || userId === uid) fail('Pick another member');
+    const ctx = requireCtx(serverId, uid);
+    if (ctx.row.owner_id !== uid) fail('Only the owner can transfer the server');
+    const target = String(userId || '');
+    if (!isMember(ctx, target) || target === uid) fail('Pick another member');
     tx(() => {
-      q('UPDATE servers SET owner_id = ? WHERE id = ?').run(userId, s.id);
-      q("UPDATE members SET role = 'owner' WHERE server_id = ? AND user_id = ?").run(s.id, userId);
-      q("UPDATE members SET role = 'admin' WHERE server_id = ? AND user_id = ?").run(s.id, uid);
+      q('UPDATE servers SET owner_id = ? WHERE id = ?').run(target, ctx.row.id);
+      q("UPDATE members SET role = 'owner' WHERE server_id = ? AND user_id = ?").run(ctx.row.id, target);
+      q("UPDATE members SET role = 'member' WHERE server_id = ? AND user_id = ?").run(ctx.row.id, uid);
     });
-    io.to('server:' + s.id).emit('server:update', serializeServer(q('SELECT * FROM servers WHERE id = ?').get(s.id)));
-    for (const id of [userId, uid]) {
-      io.to('server:' + s.id).emit('server:member_update', {
-        serverId: s.id, member: serializeMember(q('SELECT * FROM members WHERE server_id = ? AND user_id = ?').get(s.id, id)),
-      });
+    syncServer(ctx.row.id);
+    return true;
+  });
+
+  /* ---------- Roles ---------- */
+
+  function requireRoleManager(ctx, role) {
+    requirePerm(ctx, uid, P.MANAGE_ROLES);
+    if (role && ctx.row.owner_id !== uid && role.position >= topPosition(ctx.perm, uid)) fail('That role is above your highest role');
+  }
+
+  on('role:create', ({ serverId }) => {
+    const ctx = requireCtx(serverId, uid);
+    requireRoleManager(ctx, null);
+    if (ctx.roles.length >= 100) fail('This server has too many roles');
+    const id = newId();
+    tx(() => {
+      q('UPDATE roles SET position = position + 1 WHERE server_id = ? AND position >= 1').run(ctx.row.id);
+      q("INSERT INTO roles (id, server_id, name, permissions, position, created_at) VALUES (?, ?, 'new role', 0, 1, ?)").run(id, ctx.row.id, now());
+    });
+    syncServer(ctx.row.id);
+    return serializeRole(q('SELECT * FROM roles WHERE id = ?').get(id));
+  });
+
+  on('role:update', (p) => {
+    const role = q('SELECT * FROM roles WHERE id = ?').get(String(p.roleId || ''));
+    if (!role) fail('Role not found');
+    const ctx = requireCtx(role.server_id, uid);
+    requireRoleManager(ctx, role);
+    const isEveryone = role.id === ctx.row.id;
+    let permissions = role.permissions;
+    if ('permissions' in p) {
+      permissions = (Number(p.permissions) || 0) & ALL;
+      const mine = permsOf(ctx, uid);
+      const added = permissions & ~role.permissions;
+      if (!has(mine, P.ADMINISTRATOR) && (added & ~mine)) fail('You cannot grant permissions you do not have');
     }
+    const name = !isEveryone && 'name' in p ? (str(p.name, 100) || role.name) : role.name;
+    const color = 'color' in p ? (COLOR_RE.test(p.color || '') ? p.color : null) : role.color;
+    q('UPDATE roles SET name = ?, color = ?, hoist = ?, mentionable = ?, permissions = ? WHERE id = ?').run(
+      name,
+      isEveryone ? null : color,
+      !isEveryone && 'hoist' in p ? (p.hoist ? 1 : 0) : role.hoist,
+      !isEveryone && 'mentionable' in p ? (p.mentionable ? 1 : 0) : role.mentionable,
+      permissions,
+      role.id,
+    );
+    syncServer(ctx.row.id);
+    return serializeRole(q('SELECT * FROM roles WHERE id = ?').get(role.id));
+  });
+
+  on('role:delete', ({ roleId }) => {
+    const role = q('SELECT * FROM roles WHERE id = ?').get(String(roleId || ''));
+    if (!role) fail('Role not found');
+    const ctx = requireCtx(role.server_id, uid);
+    if (role.id === ctx.row.id) fail('The @everyone role cannot be deleted');
+    requireRoleManager(ctx, role);
+    tx(() => {
+      q("DELETE FROM overwrites WHERE target_id = ? AND type = 'role'").run(role.id);
+      q('DELETE FROM roles WHERE id = ?').run(role.id);
+      q('UPDATE roles SET position = position - 1 WHERE server_id = ? AND position > ?').run(ctx.row.id, role.position);
+    });
+    syncServer(ctx.row.id);
+    return true;
+  });
+
+  on('role:reorder', ({ serverId, order }) => {
+    const ctx = requireCtx(serverId, uid);
+    requireRoleManager(ctx, null);
+    if (!Array.isArray(order)) fail('Invalid order');
+    const ids = order.map(String).filter((id) => id !== ctx.row.id && ctx.roles.some((r) => r.id === id));
+    if (ids.length !== ctx.roles.length - 1) fail('Invalid order');
+    const top = ctx.row.owner_id === uid ? Infinity : topPosition(ctx.perm, uid);
+    const next = new Map(ids.map((id, i) => [id, ids.length - i]));
+    for (const r of ctx.roles) {
+      if (r.id === ctx.row.id) continue;
+      if (next.get(r.id) !== r.position && (r.position >= top || next.get(r.id) >= top)) fail('You can only move roles below your highest role');
+    }
+    tx(() => { for (const [id, pos] of next) q('UPDATE roles SET position = ? WHERE id = ?').run(pos, id); });
+    syncServer(ctx.row.id);
+    return true;
+  });
+
+  on('member:roles', ({ serverId, userId, roleIds }) => {
+    const ctx = requireCtx(serverId, uid);
+    requireRoleManager(ctx, null);
+    const target = String(userId || '');
+    if (!isMember(ctx, target)) fail('That user is not in this server');
+    if (!Array.isArray(roleIds)) fail('Invalid roles');
+    const wanted = new Set(roleIds.map(String).filter((id) => id !== ctx.row.id && ctx.roles.some((r) => r.id === id)));
+    const current = new Set(ctx.memberRoles.get(target) || []);
+    const top = ctx.row.owner_id === uid ? Infinity : topPosition(ctx.perm, uid);
+    for (const r of ctx.roles) {
+      if (wanted.has(r.id) !== current.has(r.id) && r.position >= top) fail('You can only give roles below your highest role');
+    }
+    tx(() => {
+      q('DELETE FROM member_roles WHERE server_id = ? AND user_id = ?').run(ctx.row.id, target);
+      for (const id of wanted) q('INSERT INTO member_roles (server_id, user_id, role_id) VALUES (?, ?, ?)').run(ctx.row.id, target, id);
+    });
+    const fresh = serverCtx(ctx.row.id);
+    emitMember(fresh, target);
+    syncServer(ctx.row.id, target);
     return true;
   });
 
   /* ---------- Channels ---------- */
 
-  on('channel:create', ({ serverId, name, type }) => {
-    requireManager(String(serverId || ''), uid);
-    const t = type === 'voice' ? 'voice' : 'text';
-    const count = q('SELECT COUNT(*) AS n FROM channels WHERE server_id = ?').get(serverId).n;
-    if (count >= 200) fail('This server has too many channels');
-    const ch = serializeChannel(addChannel(serverId, normalizeChannelName(name, t), t));
-    io.to('server:' + serverId).emit('channel:create', ch);
-    return ch;
+  on('channel:create', ({ serverId, name, type, parentId, private: isPrivate, allowRoles }) => {
+    const ctx = requireCtx(serverId, uid);
+    const t = CHANNEL_TYPES.includes(type) ? type : 'text';
+    const parent = parentId ? ctx.channels.get(String(parentId)) : null;
+    if (parentId && (!parent || parent.type !== 'category' || t === 'category')) fail('Invalid category');
+    requirePerm(ctx, uid, P.MANAGE_CHANNELS, parent?.id || null);
+    if (ctx.channels.size >= 250) fail('This server has too many channels');
+
+    const inherited = parent ? (ctx.overwrites.get(parent.id) || []) : [];
+    const extra = [];
+    if (isPrivate) {
+      extra.push({ id: ctx.row.id, type: 'role', allow: 0, deny: P.VIEW_CHANNEL });
+      for (const rid of Array.isArray(allowRoles) ? allowRoles.map(String) : []) {
+        if (ctx.roles.some((r) => r.id === rid && r.id !== ctx.row.id)) extra.push({ id: rid, type: 'role', allow: P.VIEW_CHANNEL, deny: 0 });
+      }
+      if (ctx.row.owner_id !== uid) extra.push({ id: uid, type: 'member', allow: P.VIEW_CHANNEL, deny: 0 });
+    }
+    if (t === 'announcement') extra.push({ id: ctx.row.id, type: 'role', allow: 0, deny: P.SEND_MESSAGES });
+
+    const merged = new Map(inherited.map((o) => [o.id, { ...o }]));
+    for (const o of extra) {
+      const cur = merged.get(o.id) || { id: o.id, type: o.type, allow: 0, deny: 0 };
+      cur.allow = (cur.allow & ~o.deny) | o.allow;
+      cur.deny = (cur.deny & ~o.allow) | o.deny;
+      merged.set(o.id, cur);
+    }
+    const custom = extra.length > 0 && t !== 'category';
+    let id;
+    tx(() => {
+      id = insertChannel(ctx.row.id, { name: normalizeChannelName(name, t), type: t, parentId: parent?.id || null, synced: custom ? 0 : 1 });
+      if (custom || t === 'category') setOverwrites(id, [...merged.values()]);
+    });
+    syncServer(ctx.row.id);
+    return serializeChannel(serverCtx(ctx.row.id).channels.get(id), serverCtx(ctx.row.id));
   });
 
-  on('channel:update', ({ channelId, name, topic }) => {
-    const ch = q('SELECT * FROM channels WHERE id = ?').get(String(channelId || ''));
+  on('channel:update', (p) => {
+    const ch = q('SELECT * FROM channels WHERE id = ?').get(String(p.channelId || ''));
     if (!ch) fail('Channel not found');
-    requireManager(ch.server_id, uid);
-    q('UPDATE channels SET name = ?, topic = ? WHERE id = ?').run(
-      name !== undefined ? normalizeChannelName(name, ch.type) : ch.name,
-      topic !== undefined ? str(topic, 1024) : ch.topic,
+    const ctx = requireCtx(ch.server_id, uid);
+    requirePerm(ctx, uid, P.MANAGE_CHANNELS, ch.id);
+    let parent = ch.parent_id;
+    if ('parentId' in p && ch.type !== 'category') {
+      if (!p.parentId) parent = null;
+      else {
+        const c = ctx.channels.get(String(p.parentId));
+        if (!c || c.type !== 'category') fail('Invalid category');
+        parent = c.id;
+      }
+    }
+    q('UPDATE channels SET name = ?, topic = ?, slowmode = ?, user_limit = ?, parent_id = ? WHERE id = ?').run(
+      'name' in p ? normalizeChannelName(p.name, ch.type) : ch.name,
+      'topic' in p ? str(p.topic, 1024) : ch.topic,
+      'slowmode' in p ? Math.max(0, Math.min(21600, Number(p.slowmode) || 0)) : ch.slowmode,
+      'userLimit' in p ? Math.max(0, Math.min(99, Number(p.userLimit) || 0)) : ch.user_limit,
+      parent,
       ch.id,
     );
-    const out = serializeChannel(q('SELECT * FROM channels WHERE id = ?').get(ch.id));
-    io.to('server:' + ch.server_id).emit('channel:update', out);
-    return out;
+    syncServer(ctx.row.id);
+    return true;
   });
 
-  on('channel:reorder', ({ serverId, order }) => {
-    requireManager(String(serverId || ''), uid);
-    if (!Array.isArray(order)) fail('Invalid order');
-    tx(() => order.forEach((id, i) => q('UPDATE channels SET position = ? WHERE id = ? AND server_id = ?').run(i, String(id), serverId)));
-    const channels = q('SELECT * FROM channels WHERE server_id = ? ORDER BY position, created_at').all(serverId).map(serializeChannel);
-    io.to('server:' + serverId).emit('channel:reorder', { serverId, channels });
+  on('channel:permissions', ({ channelId, overwrites, synced }) => {
+    const ch = q('SELECT * FROM channels WHERE id = ?').get(String(channelId || ''));
+    if (!ch) fail('Channel not found');
+    const ctx = requireCtx(ch.server_id, uid);
+    requirePerm(ctx, uid, P.MANAGE_ROLES, ch.id);
+    tx(() => {
+      if (synced && ch.parent_id) {
+        q('UPDATE channels SET synced = 1 WHERE id = ?').run(ch.id);
+        q('DELETE FROM overwrites WHERE channel_id = ?').run(ch.id);
+      } else {
+        q('UPDATE channels SET synced = 0 WHERE id = ?').run(ch.id);
+        setOverwrites(ch.id, sanitizeOverwrites(ctx, overwrites || []));
+      }
+    });
+    syncServer(ctx.row.id);
+    return true;
+  });
+
+  on('channel:reorder', ({ serverId, items }) => {
+    const ctx = requireCtx(serverId, uid);
+    requirePerm(ctx, uid, P.MANAGE_CHANNELS);
+    if (!Array.isArray(items)) fail('Invalid order');
+    tx(() => {
+      items.slice(0, 300).forEach((item, i) => {
+        const c = ctx.channels.get(String(item?.id || ''));
+        if (!c) return;
+        let parent = c.type === 'category' ? null : (item.parentId ? String(item.parentId) : null);
+        if (parent && ctx.channels.get(parent)?.type !== 'category') parent = null;
+        q('UPDATE channels SET position = ?, parent_id = ? WHERE id = ?').run(i, parent, c.id);
+      });
+    });
+    syncServer(ctx.row.id);
     return true;
   });
 
   on('channel:delete', ({ channelId }) => {
     const ch = q('SELECT * FROM channels WHERE id = ?').get(String(channelId || ''));
     if (!ch) fail('Channel not found');
-    requireManager(ch.server_id, uid);
-    if (ch.type === 'text' && q("SELECT COUNT(*) AS n FROM channels WHERE server_id = ? AND type = 'text'").get(ch.server_id).n <= 1) {
-      fail('A server needs at least one text channel');
-    }
+    const ctx = requireCtx(ch.server_id, uid);
+    requirePerm(ctx, uid, P.MANAGE_CHANNELS, ch.id);
+    const textCount = [...ctx.channels.values()].filter((c) => isTextType(c.type)).length;
+    if (isTextType(ch.type) && textCount <= 1) fail('A server needs at least one text channel');
     if (ch.type === 'voice') kickRoom(ch.id);
     tx(() => {
+      if (ch.type === 'category') q('UPDATE channels SET parent_id = NULL, synced = 0 WHERE parent_id = ?').run(ch.id);
       q('DELETE FROM messages WHERE channel_id = ?').run(ch.id);
       q('DELETE FROM read_states WHERE channel_id = ?').run(ch.id);
       q('DELETE FROM channels WHERE id = ?').run(ch.id);
+      q('UPDATE servers SET system_channel_id = NULL WHERE system_channel_id = ?').run(ch.id);
+      q('UPDATE servers SET rules_channel_id = NULL WHERE rules_channel_id = ?').run(ch.id);
     });
-    io.to('server:' + ch.server_id).emit('channel:delete', { id: ch.id, serverId: ch.server_id });
+    syncServer(ctx.row.id);
     return true;
   });
 
   /* ---------- Messages ---------- */
 
   on('messages:fetch', ({ channelId, before, limit }) => {
-    channelAccess(uid, channelId);
+    const access = channelAccess(uid, channelId);
+    if (access.kind === 'channel' && !has(access.perms, P.READ_HISTORY)) return [];
     const n = Math.min(Math.max(Number(limit) || 50, 1), 100);
     const rows = before
       ? q('SELECT * FROM messages WHERE channel_id = ? AND id < ? ORDER BY id DESC LIMIT ?').all(channelId, String(before), n)
@@ -824,22 +1229,30 @@ io.on('connection', (socket) => {
 
   on('message:send', ({ channelId, content, attachments, replyTo, nonce }) => {
     spend();
-    const access = channelAccess(uid, channelId);
-    if (access.kind === 'channel' && access.channel.type !== 'text') fail('You cannot send messages here');
+    const access = channelAccess(uid, channelId, P.SEND_MESSAGES);
+    if (access.kind === 'channel' && !isTextType(access.channel.type)) fail('You cannot send messages here');
     if (access.kind === 'dm' && isBlockedEitherWay(uid, access.otherId)) fail('You cannot message this user');
     const text = str(content, 4000, { trim: false }).replace(/^\s+|\s+$/g, '');
     const files = sanitizeAttachments(attachments);
     if (!text && !files.length) fail('Message is empty');
+    if (files.length && !has(access.perms, P.ATTACH_FILES)) fail('You cannot attach files here');
+    if (access.kind === 'channel' && access.channel.slowmode > 0 && !has(access.perms, P.MANAGE_MESSAGES) && !has(access.perms, P.MANAGE_CHANNELS)) {
+      const key = `${uid}:${access.channel.id}`;
+      const wait = (lastSent.get(key) || 0) + access.channel.slowmode * 1000 - now();
+      if (wait > 0) fail(`Slowmode is on. Wait ${Math.ceil(wait / 1000)}s`);
+      lastSent.set(key, now());
+    }
     let reply = null;
     if (replyTo) {
       const r = q('SELECT id FROM messages WHERE id = ? AND channel_id = ?').get(String(replyTo), channelId);
       reply = r ? r.id : null;
     }
+    const mentions = computeMentions(access, uid, text);
     const id = newId();
     const t = now();
     tx(() => {
-      q('INSERT INTO messages (id, channel_id, author_id, content, attachments, reply_to, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
-        .run(id, channelId, uid, text, JSON.stringify(files), reply, t);
+      q('INSERT INTO messages (id, channel_id, author_id, content, attachments, reply_to, mentions, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+        .run(id, channelId, uid, text, JSON.stringify(files), reply, JSON.stringify(mentions), t);
       if (access.kind === 'dm') q('UPDATE dms SET last_message_at = ? WHERE id = ?').run(t, channelId);
       q(`INSERT INTO read_states (user_id, channel_id, last_read_id) VALUES (?, ?, ?)
          ON CONFLICT (user_id, channel_id) DO UPDATE SET last_read_id = excluded.last_read_id`).run(uid, channelId, id);
@@ -855,7 +1268,7 @@ io.on('connection', (socket) => {
     const access = channelAccess(uid, m.channel_id);
     const text = str(content, 4000, { trim: false }).replace(/^\s+|\s+$/g, '');
     if (!text && JSON.parse(m.attachments).length === 0) fail('Message is empty');
-    q('UPDATE messages SET content = ?, edited_at = ? WHERE id = ?').run(text, now(), m.id);
+    q('UPDATE messages SET content = ?, mentions = ?, edited_at = ? WHERE id = ?').run(text, JSON.stringify(computeMentions(access, uid, text)), now(), m.id);
     const msg = serializeMessage(q('SELECT * FROM messages WHERE id = ?').get(m.id));
     emitToChannel(access, 'message:update', msg);
     return msg;
@@ -865,7 +1278,7 @@ io.on('connection', (socket) => {
     const m = q('SELECT * FROM messages WHERE id = ?').get(String(messageId || ''));
     if (!m) fail('Message not found');
     const access = channelAccess(uid, m.channel_id);
-    const canModerate = access.kind === 'channel' && (access.role === 'owner' || access.role === 'admin');
+    const canModerate = access.kind === 'channel' && has(access.perms, P.MANAGE_MESSAGES);
     if (m.author_id !== uid && !canModerate) fail('You cannot delete this message');
     q('DELETE FROM messages WHERE id = ?').run(m.id);
     emitToChannel(access, 'message:delete', { id: m.id, channelId: m.channel_id });
@@ -873,9 +1286,9 @@ io.on('connection', (socket) => {
   });
 
   on('typing', ({ channelId }) => {
-    const access = channelAccess(uid, channelId);
+    const access = channelAccess(uid, channelId, P.SEND_MESSAGES);
     const payload = { channelId, userId: uid };
-    if (access.kind === 'channel') socket.to('server:' + access.channel.server_id).emit('typing', payload);
+    if (access.kind === 'channel') toUsers(channelViewers(access.ctx, access.channel.id).filter((id) => id !== uid), 'typing', payload);
     else io.to('user:' + access.otherId).emit('typing', payload);
     return true;
   });
@@ -986,9 +1399,13 @@ io.on('connection', (socket) => {
   /* ---------- Voice & calls ---------- */
 
   on('voice:join', async ({ roomId }) => {
-    const access = channelAccess(uid, roomId);
+    const access = channelAccess(uid, roomId, P.CONNECT);
     if (access.kind === 'channel' && access.channel.type !== 'voice') fail('This is not a voice channel');
     if (access.kind === 'dm' && isBlockedEitherWay(uid, access.otherId)) fail('You cannot call this user');
+    if (access.kind === 'channel' && access.channel.user_limit > 0 && !has(access.perms, P.MOVE_MEMBERS)) {
+      const count = [...(voiceRooms.get(roomId)?.keys() || [])].filter((id) => id !== uid).length;
+      if (count >= access.channel.user_limit) fail('This voice channel is full');
+    }
 
     leaveVoice(socket);
     for (const [otherRoom, room] of voiceRooms) {
@@ -1005,8 +1422,8 @@ io.on('connection', (socket) => {
     const room = voiceRooms.get(roomId);
     const participants = [...room.values()].map(publicVoiceState);
     room.set(uid, {
-      userId: uid, socketId: socket.id, muted: false, deafened: false, video: false, screen: false,
-      cameraStreamId: null, screenStreamId: null, joinedAt: now(),
+      userId: uid, socketId: socket.id, muted: !has(access.perms, P.SPEAK), deafened: false, video: false, screen: false,
+      serverMuted: false, serverDeafened: false, cameraStreamId: null, screenStreamId: null, joinedAt: now(),
     });
     voiceBySocket.set(socket.id, roomId);
     emitVoice(roomId);
@@ -1029,8 +1446,40 @@ io.on('connection', (socket) => {
     const roomId = voiceBySocket.get(socket.id);
     const state = roomId && voiceRooms.get(roomId)?.get(uid);
     if (!state || state.socketId !== socket.id) fail('Not in a voice channel');
+    let perms = ALL;
+    const ch = q('SELECT server_id FROM channels WHERE id = ?').get(roomId);
+    if (ch) perms = permsOf(serverCtx(ch.server_id), uid, roomId);
     for (const key of ['muted', 'deafened', 'video', 'screen']) if (key in p) state[key] = Boolean(p[key]);
     for (const key of ['cameraStreamId', 'screenStreamId']) if (key in p) state[key] = p[key] ? str(p[key], 100) : null;
+    if (!has(perms, P.SPEAK)) state.muted = true;
+    if (!has(perms, P.VIDEO)) { state.video = false; state.screen = false; }
+    emitVoice(roomId);
+    return true;
+  });
+
+  on('voice:moderate', ({ userId, serverMuted, serverDeafened, disconnect }) => {
+    const target = String(userId || '');
+    let roomId = null;
+    for (const [id, room] of voiceRooms) if (room.has(target)) roomId = id;
+    const ch = roomId && q('SELECT * FROM channels WHERE id = ?').get(roomId);
+    if (!ch) fail('That user is not in a voice channel');
+    const ctx = requireCtx(ch.server_id, uid);
+    const perms = permsOf(ctx, uid, roomId);
+    const state = voiceRooms.get(roomId).get(target);
+    if (target !== uid && target === ctx.row.owner_id) fail(NO_PERMISSION);
+    if (disconnect) {
+      if (!has(perms, P.MOVE_MEMBERS)) fail(NO_PERMISSION);
+      disconnectFromVoice(state, roomId);
+      return true;
+    }
+    if (serverMuted !== undefined) {
+      if (!has(perms, P.MUTE_MEMBERS)) fail(NO_PERMISSION);
+      state.serverMuted = Boolean(serverMuted);
+    }
+    if (serverDeafened !== undefined) {
+      if (!has(perms, P.DEAFEN_MEMBERS)) fail(NO_PERMISSION);
+      state.serverDeafened = Boolean(serverDeafened);
+    }
     emitVoice(roomId);
     return true;
   });

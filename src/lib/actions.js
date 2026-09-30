@@ -3,6 +3,7 @@ import { getState, resetState, setState, withKey, withoutKey } from './store';
 import { voice } from './voice';
 import { playSound, startLoop, stopLoop } from './sounds';
 import { displayName, nonce } from './format';
+import { can, P } from './perms';
 
 /* ------------------------------------------------------------------ */
 /* UI helpers                                                          */
@@ -114,7 +115,7 @@ export function startSession(token) {
   socket.on('self:update', (u) => setState((s) => ({ me: u, users: withKey(s.users, u.id, { ...s.users[u.id], ...u }) })));
   socket.on('user:update', (u) => setState((s) => ({ users: withKey(s.users, u.id, { ...s.users[u.id], ...u }) })));
 
-  socket.on('server:create', ({ server, users, voice: voiceStates }) => addServer(server, users, voiceStates));
+  socket.on('server:sync', ({ server, users, voice: voiceStates }) => syncServerData(server, users, voiceStates));
   socket.on('server:update', (srv) => setState((s) => ({ servers: withKey(s.servers, srv.id, { ...s.servers[srv.id], ...srv }) })));
   socket.on('server:remove', ({ serverId }) => removeServer(serverId));
   socket.on('server:member_add', ({ serverId, member, user }) => setState((s) => ({
@@ -128,18 +129,6 @@ export function startSession(token) {
     members: withKey(s.members, serverId, withoutKey(s.members[serverId] || {}, userId)),
   })));
 
-  socket.on('channel:create', (ch) => setState((s) => ({ channels: withKey(s.channels, ch.id, ch) })));
-  socket.on('channel:update', (ch) => setState((s) => ({ channels: withKey(s.channels, ch.id, { ...s.channels[ch.id], ...ch }) })));
-  socket.on('channel:reorder', ({ channels }) => setState((s) => {
-    const next = { ...s.channels };
-    for (const ch of channels) next[ch.id] = { ...next[ch.id], ...ch };
-    return { channels: next };
-  }));
-  socket.on('channel:delete', ({ id, serverId }) => {
-    const { view } = getState();
-    setState((s) => ({ channels: withoutKey(s.channels, id), messages: withoutKey(s.messages, id) }));
-    if (view.kind === 'server' && view.channelId === id) selectServer(serverId);
-  });
 
   socket.on('message:new', onMessageNew);
   socket.on('message:update', (m) => setState((s) => {
@@ -217,11 +206,13 @@ function onReady(data) {
   const servers = {};
   const channels = {};
   const members = {};
+  const roles = {};
   for (const srv of data.servers) {
-    const { channels: chs, members: mems, ...rest } = srv;
+    const { channels: chs, members: mems, roles: rs, ...rest } = srv;
     servers[srv.id] = rest;
     for (const c of chs) channels[c.id] = c;
     members[srv.id] = Object.fromEntries(mems.map((m) => [m.userId, m]));
+    roles[srv.id] = sortRoles(rs);
   }
   const savedOrder = loadServerOrder();
   const ids = data.servers.map((s) => s.id);
@@ -239,6 +230,7 @@ function onReady(data) {
     serverOrder,
     channels,
     members,
+    roles,
     dms: Object.fromEntries(data.dms.map((d) => [d.id, d])),
     relationships: Object.fromEntries(data.relationships.map((r) => [r.id, r.type])),
     readStates: data.readStates,
@@ -276,22 +268,38 @@ export function reorderServers(order) {
   setState({ serverOrder: order });
 }
 
-function addServer(server, users, voiceStates) {
+const sortRoles = (list) => [...list].sort((a, b) => b.position - a.position);
+
+/** Replaces everything we know about a server with the server's current view for us. */
+function syncServerData(server, users, voiceStates) {
+  let lostView = false;
   setState((s) => {
-    const { channels: chs, members: mems, ...rest } = server;
+    const { channels: chs, members: mems, roles: rs, ...rest } = server;
     const nextUsers = { ...s.users };
     for (const u of users) nextUsers[u.id] = { ...nextUsers[u.id], ...u };
-    const nextChannels = { ...s.channels };
+    const nextChannels = {};
+    const nextMessages = { ...s.messages };
+    for (const [id, c] of Object.entries(s.channels)) {
+      if (c.serverId !== server.id) nextChannels[id] = c;
+      else if (!chs.some((x) => x.id === id)) delete nextMessages[id];
+    }
     for (const c of chs) nextChannels[c.id] = c;
+    if (s.view.kind === 'server' && s.view.serverId === server.id && s.view.channelId && !nextChannels[s.view.channelId]) lostView = true;
+    const voiceNext = { ...s.voice };
+    for (const c of chs) if (c.type === 'voice') delete voiceNext[c.id];
     return {
       servers: withKey(s.servers, server.id, rest),
       serverOrder: s.serverOrder.includes(server.id) ? s.serverOrder : [...s.serverOrder, server.id],
       channels: nextChannels,
+      messages: nextMessages,
       members: withKey(s.members, server.id, Object.fromEntries(mems.map((m) => [m.userId, m]))),
+      roles: withKey(s.roles, server.id, sortRoles(rs)),
       users: nextUsers,
-      voice: { ...s.voice, ...voiceStates },
+      voice: { ...voiceNext, ...voiceStates },
     };
   });
+  if (lostView) selectServer(server.id);
+  if (voice.roomId && getState().channels[voice.roomId] === undefined && !getState().dms[voice.roomId]) voice.leave({ local: true });
 }
 
 function removeServer(serverId) {
@@ -305,6 +313,7 @@ function removeServer(serverId) {
     servers: withoutKey(s.servers, serverId),
     serverOrder: s.serverOrder.filter((id) => id !== serverId),
     members: withoutKey(s.members, serverId),
+    roles: withoutKey(s.roles, serverId),
     channels,
     messages,
   });
@@ -317,15 +326,34 @@ export function serverChannels(state, serverId) {
     .sort((a, b) => a.position - b.position || a.id.localeCompare(b.id));
 }
 
+/** Channels in sidebar order: uncategorized first, then each category followed by its channels. */
+export function channelTree(state, serverId) {
+  const all = serverChannels(state, serverId);
+  const categories = all.filter((c) => c.type === 'category');
+  const kind = (c) => (c.type === 'voice' ? 1 : 0);
+  const byParent = (id) => all
+    .filter((c) => c.type !== 'category' && (c.parentId || null) === id)
+    .sort((a, b) => kind(a) - kind(b));
+  return {
+    loose: byParent(null).filter((c) => !c.parentId || !state.channels[c.parentId]),
+    categories: categories.map((cat) => ({ category: cat, channels: byParent(cat.id) })),
+  };
+}
+
+export function orderedChannels(state, serverId) {
+  const tree = channelTree(state, serverId);
+  return [...tree.loose, ...tree.categories.flatMap((g) => g.channels)];
+}
+
 /* ------------------------------------------------------------------ */
 /* Navigation                                                          */
 /* ------------------------------------------------------------------ */
 
 export function selectServer(serverId) {
   const s = getState();
-  const list = serverChannels(s, serverId);
+  const list = orderedChannels(s, serverId);
   const remembered = s.lastChannel[serverId];
-  const channel = list.find((c) => c.id === remembered) || list.find((c) => c.type === 'text');
+  const channel = list.find((c) => c.id === remembered) || list.find((c) => c.type === 'text' || c.type === 'announcement');
   setState({ view: { kind: 'server', serverId, channelId: channel?.id || null } });
 }
 
@@ -403,9 +431,19 @@ function appendMessage(s, m) {
   return withKey(s.messages, m.channelId, { ...bucket, list });
 }
 
-function mentionsMe(content, me) {
-  if (!content || !me) return false;
-  return new RegExp(`(^|\\W)@(${me.username}|everyone)(?![\\w.])`, 'i').test(content);
+/** Does a message ping me? @username, a pinging @everyone, or one of my roles. */
+export function mentionsMe(m, state = getState()) {
+  const me = state.me;
+  if (!me || m.authorId === me.id) return false;
+  if (m.mentions?.everyone) return true;
+  const channel = state.channels[m.channelId];
+  if (channel && m.mentions?.roles?.length) {
+    const mine = state.members[channel.serverId]?.[me.id]?.roles || [];
+    if (m.mentions.roles.some((id) => mine.includes(id))) return true;
+  }
+  if (!m.content) return false;
+  const name = me.username.replace(/\./g, '\\.');
+  return new RegExp(`(^|[^\\w])@${name}(?![\\w.])`, 'i').test(m.content);
 }
 
 function onMessageNew(m) {
@@ -428,7 +466,7 @@ function onMessageNew(m) {
       patch.readStates = withKey(st.readStates, m.channelId, m.id);
     } else {
       if (isDm) patch.unreadDm = withKey(st.unreadDm, m.channelId, (st.unreadDm[m.channelId] || 0) + 1);
-      else if (mentionsMe(m.content, me)) patch.mentions = withKey(st.mentions, m.channelId, (st.mentions[m.channelId] || 0) + 1);
+      else if (mentionsMe(m, st)) patch.mentions = withKey(st.mentions, m.channelId, (st.mentions[m.channelId] || 0) + 1);
     }
     return patch;
   });
@@ -436,7 +474,7 @@ function onMessageNew(m) {
   if (own) return;
   if (viewing) { markRead(m.channelId, m.id); return; }
   if (m.kind !== 'default') return;
-  const important = isDm || mentionsMe(m.content, me);
+  const important = isDm || mentionsMe(m, s);
   if (important && me.status !== 'dnd') {
     playSound('message');
     const author = s.users[m.authorId];
@@ -542,13 +580,31 @@ export const resetInvite = (serverId) => attempt(() => call('server:invite_reset
 export const deleteServer = (serverId) => attempt(() => call('server:delete', { serverId }));
 export const leaveServer = (serverId) => attempt(() => call('server:leave', { serverId }));
 export const kickMember = (serverId, userId) => attempt(() => call('server:kick', { serverId, userId }));
-export const setMemberRole = (serverId, userId, role) => attempt(() => call('member:role', { serverId, userId, role }));
-export const setNickname = (serverId, nickname) => attempt(() => call('member:nickname', { serverId, nickname }), { success: 'Nickname updated' });
+export const banMember = (serverId, userId, reason = '') => attempt(() => call('server:ban', { serverId, userId, reason }), { success: 'Member banned' });
+export const unbanMember = (serverId, userId) => attempt(() => call('server:unban', { serverId, userId }));
+export const fetchBans = (serverId) => call('server:bans', { serverId });
+export const setNickname = (serverId, nickname, userId = null) => attempt(() => call('member:nickname', { serverId, nickname, userId }), { success: 'Nickname updated' });
 export const transferServer = (serverId, userId) => attempt(() => call('server:transfer', { serverId, userId }), { success: 'Ownership transferred' });
-export const createChannel = (serverId, name, type) => attempt(() => call('channel:create', { serverId, name, type }));
+
+export const createRole = (serverId) => attempt(() => call('role:create', { serverId }));
+export const updateRole = (roleId, patch) => attempt(() => call('role:update', { roleId, ...patch }));
+export const deleteRole = (roleId) => attempt(() => call('role:delete', { roleId }));
+export const reorderRoles = (serverId, order) => attempt(() => call('role:reorder', { serverId, order }));
+export const setMemberRoles = (serverId, userId, roleIds) => attempt(() => call('member:roles', { serverId, userId, roleIds }));
+
+export function toggleMemberRole(serverId, userId, roleId) {
+  const current = getState().members[serverId]?.[userId]?.roles || [];
+  const next = current.includes(roleId) ? current.filter((id) => id !== roleId) : [...current, roleId];
+  return setMemberRoles(serverId, userId, next);
+}
+
+export const createChannel = (serverId, fields) => attempt(() => call('channel:create', { serverId, ...fields }));
 export const updateChannel = (channelId, patch) => attempt(() => call('channel:update', { channelId, ...patch }));
+export const setChannelPermissions = (channelId, overwrites, synced = false) => attempt(() => call('channel:permissions', { channelId, overwrites, synced }), { success: 'Permissions saved' });
 export const deleteChannel = (channelId) => attempt(() => call('channel:delete', { channelId }));
-export const reorderChannels = (serverId, order) => attempt(() => call('channel:reorder', { serverId, order }));
+export const reorderChannels = (serverId, items) => attempt(() => call('channel:reorder', { serverId, items }));
+
+export const moderateVoice = (userId, patch) => attempt(() => call('voice:moderate', { userId, ...patch }));
 
 /* ------------------------------------------------------------------ */
 /* Profile, friends                                                    */
@@ -587,19 +643,32 @@ function onVoiceUpdate({ roomId, states }) {
       for (const id of before) if (!after.has(id) && id !== me) playSound('leave');
     }
     voice.onRoomUpdate(roomId, states);
+    const mine = states.find((p) => p.userId === me);
+    const channel = getState().channels[roomId];
+    const canSpeak = !channel || can(getState(), channel.serverId, P.SPEAK, roomId);
+    voice.setForced({ muted: Boolean(mine?.serverMuted) || !canSpeak, deafened: Boolean(mine?.serverDeafened) });
   }
 
   if (s.incomingCall?.roomId === roomId && (states.some((p) => p.userId === me) || !states.length)) clearIncoming(roomId);
   syncCallingLoop();
 }
 
+// The DM call we are in that someone else has already joined. Once answered, being
+// left alone again (the other person hung up) must not start the ringback again.
+let answeredCall = null;
+
 function syncCallingLoop() {
   const s = getState();
   const roomId = voice.roomId;
   const inDmCall = roomId && s.dms[roomId];
-  const alone = inDmCall && (s.voice[roomId] || []).every((p) => p.userId === s.me?.id);
-  if (alone) startLoop('calling');
+  const others = (s.voice[roomId] || []).some((p) => p.userId !== s.me?.id);
+  if (!roomId) answeredCall = null;
+  if (inDmCall && others) answeredCall = roomId;
+  if (answeredCall && answeredCall !== roomId) answeredCall = null;
+  const ringing = Boolean(inDmCall && !others && answeredCall !== roomId);
+  if (ringing) startLoop('calling');
   else stopLoop('calling');
+  if (s.outgoingRing !== (ringing ? roomId : null)) setState({ outgoingRing: ringing ? roomId : null });
 }
 
 let ringTimer = null;
@@ -639,7 +708,9 @@ export async function joinVoice(roomId) {
 
 export function leaveVoice() {
   voice.leave();
+  answeredCall = null;
   stopLoop('calling');
+  setState({ outgoingRing: null });
 }
 
 export async function startCall(dmId, { video = false } = {}) {

@@ -8,3 +8,4 @@ server/data/
 Thumbs.db
 tools/
 build/release-notes.md
+.buildtmp/

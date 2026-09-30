@@ -23,16 +23,46 @@ function Spoiler({ children }) {
   );
 }
 
+/** Longest role name that follows an @ at `index`, respecting word boundaries. */
+function roleAt(text, index, roles) {
+  if (!roles?.length) return null;
+  const rest = text.slice(index + 1).toLowerCase();
+  let best = null;
+  for (const r of roles) {
+    const name = r.name.toLowerCase();
+    if (!rest.startsWith(name)) continue;
+    const after = rest.charAt(name.length);
+    if (after && /[\w]/.test(after)) continue;
+    if (!best || r.name.length > best.name.length) best = r;
+  }
+  return best;
+}
+
 function inline(text, ctx, keyBase = 'i') {
   const out = [];
   let last = 0;
   let i = 0;
-  INLINE.lastIndex = 0;
-  const matches = [...text.matchAll(INLINE)];
-  for (const m of matches) {
+  const re = new RegExp(INLINE.source, 'g');
+  let m;
+  while ((m = re.exec(text))) {
+    if (m.index < last) continue;
     if (m.index > last) out.push(text.slice(last, m.index));
     const key = `${keyBase}-${i++}`;
     const g = m.groups;
+    if (g.mention) {
+      const role = roleAt(text, m.index + (m[0].length - m[0].trimStart().length), ctx.roles);
+      if (role) {
+        const mine = ctx.myRoles?.includes(role.id);
+        out.push(
+          <span key={key} className={`md-mention role${mine ? ' self' : ''}`} style={{ '--role': role.color || undefined }}>
+            @{role.name}
+          </span>,
+        );
+        last = m.index + 1 + role.name.length;
+        re.lastIndex = last;
+        continue;
+      }
+    }
     if (g.code) out.push(<code key={key} className="md-code">{m[2]}</code>);
     else if (g.spoiler) out.push(<Spoiler key={key}>{inline(m[4], ctx, key)}</Spoiler>);
     else if (g.bold) out.push(<strong key={key}>{inline(m[6], ctx, key)}</strong>);

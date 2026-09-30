@@ -6,6 +6,7 @@ RUN npm ci --ignore-scripts
 COPY index.html vite.config.mjs ./
 COPY public ./public
 COPY src ./src
+COPY shared ./shared
 RUN npx vite build
 
 FROM node:24-slim
@@ -14,6 +15,7 @@ ENV NODE_ENV=production \
     DATA_DIR=/data \
     WEB_DIR=/app/dist
 WORKDIR /app/server
+COPY shared/ /app/shared/
 COPY server/package.json server/package-lock.json ./
 RUN npm ci --omit=dev
 COPY server/ ./

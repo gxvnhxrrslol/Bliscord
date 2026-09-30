@@ -1,5 +1,22 @@
 [
   {
+    "version": "1.2.0",
+    "date": "2026-09-30",
+    "title": "Roles, permissions and profile styles",
+    "items": [
+      "Roles with colors, permissions, ordering and separate member list groups",
+      "Categories, announcement channels, a rules channel and a welcome message channel",
+      "Private channels and per-channel permissions for any role or member",
+      "Slowmode, voice channel user limits, bans, server mute, server deafen and disconnect",
+      "Mention roles with @RoleName",
+      "Profile themes, animated avatar decorations, profile effects and name styles",
+      "Upload your own background image for any theme",
+      "Stereo microphone option that everyone in the call hears",
+      "Screen share audio no longer lights up the speaking ring",
+      "The calling sound no longer plays again when the other person leaves a call, and their tile goes away"
+    ]
+  },
+  {
     "version": "1.1.0",
     "date": "2026-09-29",
     "title": "Sharper streams",

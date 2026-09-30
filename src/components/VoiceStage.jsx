@@ -7,6 +7,8 @@ import { assetUrl } from '../lib/api';
 import { colorFor, displayName, duration } from '../lib/format';
 import { Avatar, Button, Slider } from './ui';
 import { ChatHeader } from './ChatView';
+import { voiceMemberMenu } from './Sidebars';
+import { can, P } from '../lib/perms';
 import Icon from './Icons';
 
 function useVideo(stream) {
@@ -122,7 +124,14 @@ function Tile({ tileKey, kind, userId, stream, state, speaking, isSelf, focused,
       className={`tile tile-${kind}${speaking && kind === 'user' ? ' speaking' : ''}${focused ? ' focused' : ''}${showVideo ? ' has-video' : ''}${calling ? ' calling' : ''}`}
       style={{ '--tile-color': color }}
       onClick={() => onFocus(tileKey)}
-      onContextMenu={(e) => (isStream ? streamMenu(e, userId) : !isSelf && volumeMenu(e, userId))}
+      onContextMenu={(e) => {
+        if (isStream) { streamMenu(e, userId); return; }
+        const { voice: rooms, channels } = getState();
+        const roomId = Object.keys(rooms).find((rid) => rooms[rid].some((p) => p.userId === userId));
+        const ch = roomId && channels[roomId];
+        if (ch && state) voiceMemberMenu(e, { state, serverId: ch.serverId, channelId: ch.id });
+        else if (!isSelf) volumeMenu(e, userId);
+      }}
     >
       {!showVideo && (
         <div className="tile-idle">
@@ -154,7 +163,7 @@ function Tile({ tileKey, kind, userId, stream, state, speaking, isSelf, focused,
         {kind === 'screen' && <span className="live-badge">LIVE</span>}
         <span>{displayName(user)}</span>
         {streamMuted && <Icon.SpeakerOff size={14} />}
-        {kind === 'user' && (state?.deafened ? <Icon.HeadphonesOff size={14} /> : state?.muted && <Icon.MicOff size={14} />)}
+        {kind === 'user' && (state?.deafened || state?.serverDeafened ? <Icon.HeadphonesOff size={14} /> : (state?.muted || state?.serverMuted) && <Icon.MicOff size={14} />)}
       </div>
       {connecting && !isSelf && <div className="tile-connecting"><span className="spinner" style={{ width: 18, height: 18 }} /></div>}
       {showVideo && (
@@ -178,7 +187,11 @@ function bestColumns(n, width, height, aspect = 16 / 9) {
 
 function Controls({ compact }) {
   const v = useVoice();
-  const muted = v.muted || v.deafened;
+  const muted = v.muted || v.deafened || v.serverMuted || v.serverDeafened;
+  const canVideo = useStore((s) => {
+    const ch = v.roomId && s.channels[v.roomId];
+    return !ch || can(s, ch.serverId, P.VIDEO, ch.id);
+  });
   return (
     <div className={`stage-controls glass-strong${compact ? ' compact' : ''}`}>
       <button className={`sc-btn${muted ? ' off' : ''}`} onClick={() => voice.setMuted(!muted)} data-tip={muted ? 'Unmute' : 'Mute'}>
@@ -187,10 +200,10 @@ function Controls({ compact }) {
       <button className={`sc-btn${v.deafened ? ' off' : ''}`} onClick={() => voice.setDeafened(!v.deafened)} data-tip={v.deafened ? 'Undeafen' : 'Deafen'}>
         {v.deafened ? <Icon.HeadphonesOff size={20} /> : <Icon.Headphones size={20} />}
       </button>
-      <button className={`sc-btn${v.cameraStream ? ' on' : ''}`} onClick={toggleCamera} data-tip={v.cameraStream ? 'Turn off camera' : 'Turn on camera'}>
+      <button className={`sc-btn${v.cameraStream ? ' on' : ''}`} onClick={toggleCamera} disabled={!canVideo} data-tip={v.cameraStream ? 'Turn off camera' : 'Turn on camera'}>
         {v.cameraStream ? <Icon.Video size={20} /> : <Icon.VideoOff size={20} />}
       </button>
-      <button className={`sc-btn${v.screenStream ? ' on' : ''}`} onClick={toggleScreen} data-tip={v.screenStream ? 'Stop sharing' : 'Share your screen'}>
+      <button className={`sc-btn${v.screenStream ? ' on' : ''}`} onClick={toggleScreen} disabled={!canVideo} data-tip={v.screenStream ? 'Stop sharing' : 'Share your screen'}>
         {v.screenStream ? <Icon.ScreenOff size={20} /> : <Icon.Screen size={20} />}
       </button>
       <button className="sc-btn leave" onClick={leaveVoice} data-tip="Disconnect">
@@ -334,10 +347,11 @@ export function CallStage({ roomId }) {
   const joined = v.roomId === roomId;
   const [height, setHeight] = useState(() => Math.round(window.innerHeight * 0.42));
 
-  const recipientIn = states.some((st) => st.userId === dm?.recipientId);
-  const extraTiles = useMemo(() => (joined && !recipientIn && dm
+  // While ringing, show the person being called; once they have joined and left, their tile goes away.
+  const ringing = useStore((s) => s.outgoingRing === roomId);
+  const extraTiles = useMemo(() => (joined && ringing && dm
     ? [{ key: `c-${dm.recipientId}`, kind: 'user', userId: dm.recipientId, stream: null, state: null, isSelf: false, calling: true }]
-    : []), [joined, recipientIn, dm]);
+    : []), [joined, ringing, dm]);
 
   const startDrag = (e) => {
     const startY = e.clientY;

@@ -1,14 +1,16 @@
 import { useMemo, useState } from 'react';
-import { useStore } from '../lib/store';
+import { getState, updateSettings, useStore } from '../lib/store';
 import {
-  joinVoice, leaveVoice, openHome, openMenu, openModal, openPopout, selectChannel, serverChannels, setStatus, leaveServer,
-  deleteChannel, markRead,
+  channelTree, deleteChannel, joinVoice, leaveServer, leaveVoice, markRead, moderateVoice, openHome, openMenu, openModal,
+  openPopout, selectChannel, setStatus,
 } from '../lib/actions';
 import { useVoice, voice } from '../lib/voice';
 import { toggleCamera, toggleScreen } from '../lib/media';
 import { displayName } from '../lib/format';
 import { assetUrl } from '../lib/api';
-import { Avatar, StatusDot, copyText } from './ui';
+import { has, P, permsFor, roleColor, usePerms } from '../lib/perms';
+import { Avatar, Slider, StatusDot, copyText } from './ui';
+import { ChannelIcon, isPrivateChannel } from './channelUi';
 import { VerifiedMark } from './Badges';
 import Icon from './Icons';
 
@@ -100,63 +102,111 @@ export function HomeSidebar() {
 /* Server                                                              */
 /* ------------------------------------------------------------------ */
 
-function VoiceMember({ state, speaking, serverId }) {
+function VoiceVolumeItem({ userId }) {
+  const vol = useStore((s) => s.settings.userVolumes[userId] ?? 100);
+  return (
+    <div className="menu-custom">
+      <span className="menu-custom-label">User volume</span>
+      <Slider
+        value={vol}
+        onChange={(val) => { updateSettings({ userVolumes: { ...getState().settings.userVolumes, [userId]: val } }); voice.refreshVolumes(); }}
+        format={(val) => `${val}%`}
+      />
+    </div>
+  );
+}
+
+export function voiceMemberMenu(e, { state, serverId, channelId }) {
+  const s = getState();
+  const isMe = state.userId === s.me.id;
+  const perms = serverId ? permsFor(s, serverId, channelId) : 0;
+  const user = s.users[state.userId];
+  const items = [
+    { label: 'Profile', icon: Icon.User, onClick: () => openPopout(state.userId, { left: e.clientX, top: e.clientY, right: e.clientX, bottom: e.clientY, width: 0, height: 0 }, serverId) },
+  ];
+  if (!isMe) items.push({ render: () => <VoiceVolumeItem userId={state.userId} /> });
+  const mod = [];
+  if (has(perms, P.MUTE_MEMBERS)) mod.push({ label: 'Server mute', icon: Icon.MicOff, checked: Boolean(state.serverMuted), onClick: () => moderateVoice(state.userId, { serverMuted: !state.serverMuted }) });
+  if (has(perms, P.DEAFEN_MEMBERS)) mod.push({ label: 'Server deafen', icon: Icon.HeadphonesOff, checked: Boolean(state.serverDeafened), onClick: () => moderateVoice(state.userId, { serverDeafened: !state.serverDeafened }) });
+  if (has(perms, P.MOVE_MEMBERS) && !isMe) mod.push({ label: `Disconnect ${displayName(user)}`, icon: Icon.PhoneOff, danger: true, onClick: () => moderateVoice(state.userId, { disconnect: true }) });
+  if (mod.length) items.push({ separator: true }, ...mod);
+  openMenu(e, items);
+}
+
+function VoiceFlags({ state }) {
+  if (state.serverDeafened) return <Icon.HeadphonesOff size={14} className="flag-server" />;
+  if (state.deafened) return <Icon.HeadphonesOff size={14} className="flag-off" />;
+  if (state.serverMuted) return <Icon.MicOff size={14} className="flag-server" />;
+  if (state.muted) return <Icon.MicOff size={14} className="flag-off" />;
+  return null;
+}
+
+function VoiceMember({ state, speaking, serverId, channelId }) {
   const user = useStore((s) => s.users[state.userId]);
   const member = useStore((s) => s.members[serverId]?.[state.userId]);
+  const color = useStore((s) => roleColor(s, serverId, state.userId));
   if (!user) return null;
   return (
     <div
       className={`voice-member${speaking ? ' speaking' : ''}`}
       onClick={(e) => openPopout(user.id, e.currentTarget.getBoundingClientRect(), serverId)}
+      onContextMenu={(e) => voiceMemberMenu(e, { state, serverId, channelId })}
     >
       <Avatar user={user} size={22} speaking={speaking} />
-      <span className="voice-member-name">{displayName(user, member)}</span>
+      <span className="voice-member-name" style={{ color: color || undefined }}>{displayName(user, member)}</span>
       <span className="voice-member-flags">
         {state.screen && <span className="live-badge">LIVE</span>}
         {state.video && <Icon.Video size={14} />}
-        {state.deafened ? <Icon.HeadphonesOff size={14} className="flag-off" /> : state.muted && <Icon.MicOff size={14} className="flag-off" />}
+        <VoiceFlags state={state} />
       </span>
     </div>
   );
 }
 
-function ChannelRow({ channel, active, canManage }) {
-  const unread = useStore((s) => channel.type === 'text' && channel.lastMessageId && channel.lastMessageId > (s.readStates[channel.id] || ''));
+function ChannelRow({ channel, active, server }) {
+  const isText = channel.type === 'text' || channel.type === 'announcement';
+  const unread = useStore((s) => isText && channel.lastMessageId && channel.lastMessageId > (s.readStates[channel.id] || ''));
   const mentions = useStore((s) => s.mentions[channel.id] || 0);
   const participants = useStore((s) => s.voice[channel.id]);
+  const perms = usePerms(channel.serverId, channel.id);
+  const isPrivate = useStore((s) => isPrivateChannel(s, channel));
   const v = useVoice();
   const isVoice = channel.type === 'voice';
+  const canEdit = has(perms, P.MANAGE_CHANNELS) || has(perms, P.MANAGE_ROLES);
+  const full = isVoice && channel.userLimit > 0 && (participants?.length || 0) >= channel.userLimit;
 
   const open = () => {
     selectChannel(channel.serverId, channel.id);
-    if (isVoice && v.roomId !== channel.id) joinVoice(channel.id);
+    if (isVoice && v.roomId !== channel.id && has(perms, P.CONNECT)) joinVoice(channel.id);
   };
 
   const menu = (e) => openMenu(e, [
-    ...(channel.type === 'text' ? [{ label: 'Mark as read', icon: Icon.Check, onClick: () => markRead(channel.id, channel.lastMessageId) }] : []),
-    ...(isVoice && v.roomId !== channel.id ? [{ label: 'Join voice', icon: Icon.Speaker, onClick: open }] : []),
+    ...(isText ? [{ label: 'Mark as read', icon: Icon.Check, onClick: () => markRead(channel.id, channel.lastMessageId) }] : []),
+    ...(isVoice && v.roomId !== channel.id && has(perms, P.CONNECT) ? [{ label: 'Join voice', icon: Icon.Speaker, onClick: open }] : []),
     { label: 'Copy channel ID', icon: Icon.Copy, onClick: () => copyText(channel.id) },
-    ...(canManage ? [
-      { separator: true },
-      { label: 'Edit channel', icon: Icon.Settings, onClick: () => openModal('channelSettings', { channelId: channel.id }) },
-      { label: 'Delete channel', icon: Icon.Trash, danger: true, onClick: () => openModal('confirm', {
-        title: `Delete ${isVoice ? '' : '#'}${channel.name}`,
-        body: 'This cannot be undone.',
-        confirm: 'Delete channel',
-        danger: true,
-        onConfirm: () => deleteChannel(channel.id),
-      }) },
-    ] : []),
+    ...(canEdit ? [{ separator: true }, { label: 'Edit channel', icon: Icon.Settings, onClick: () => openModal('channelSettings', { channelId: channel.id }) }] : []),
+    ...(has(perms, P.MANAGE_CHANNELS) ? [{ label: 'Delete channel', icon: Icon.Trash, danger: true, onClick: () => openModal('confirm', {
+      title: `Delete ${isVoice ? '' : '#'}${channel.name}`,
+      body: 'This cannot be undone.',
+      confirm: 'Delete channel',
+      danger: true,
+      onConfirm: () => deleteChannel(channel.id),
+    }) }] : []),
   ]);
 
   return (
     <>
       <div className={`channel-row${active ? ' active' : ''}${unread ? ' unread' : ''}`} onClick={open} onContextMenu={menu}>
         {unread && !active && <span className="channel-pill" />}
-        <span className="channel-icon">{isVoice ? <Icon.Speaker size={18} /> : <Icon.Hash size={18} />}</span>
+        <span className="channel-icon"><ChannelIcon channel={channel} server={server} isPrivate={isPrivate} /></span>
         <span className="channel-name">{channel.name}</span>
+        {isVoice && channel.userLimit > 0 && (
+          <span className={`user-limit${full ? ' full' : ''}`}>
+            {String(participants?.length || 0).padStart(2, '0')}/{String(channel.userLimit).padStart(2, '0')}
+          </span>
+        )}
         {mentions > 0 && <span className="badge">{mentions}</span>}
-        {canManage && (
+        {canEdit && (
           <button className="channel-gear" onClick={(e) => { e.stopPropagation(); openModal('channelSettings', { channelId: channel.id }); }} data-tip="Edit channel">
             <Icon.Settings size={14} />
           </button>
@@ -165,7 +215,7 @@ function ChannelRow({ channel, active, canManage }) {
       {isVoice && participants?.length > 0 && (
         <div className="voice-members">
           {participants.map((p) => (
-            <VoiceMember key={p.userId} state={p} serverId={channel.serverId} speaking={v.roomId === channel.id && v.speaking.has(p.userId)} />
+            <VoiceMember key={p.userId} state={p} serverId={channel.serverId} channelId={channel.id} speaking={v.roomId === channel.id && v.speaking.has(p.userId)} />
           ))}
         </div>
       )}
@@ -173,21 +223,46 @@ function ChannelRow({ channel, active, canManage }) {
   );
 }
 
-function ChannelGroup({ title, channels, activeId, canManage, onAdd }) {
-  const [open, setOpen] = useState(true);
+const COLLAPSED_KEY = 'bliscord.collapsedCategories';
+function loadCollapsed() {
+  try { return JSON.parse(localStorage.getItem(COLLAPSED_KEY) || '{}'); } catch { return {}; }
+}
+
+function CategoryGroup({ category, channels, activeId, server, collapsed, onToggle }) {
+  const perms = usePerms(category.serverId, category.id);
+  const canCreate = has(perms, P.MANAGE_CHANNELS);
+  const menu = (e) => openMenu(e, [
+    { label: collapsed ? 'Expand category' : 'Collapse category', icon: Icon.ChevronDown, onClick: onToggle },
+    ...(canCreate ? [
+      { separator: true },
+      { label: 'Create channel', icon: Icon.PlusCircle, onClick: () => openModal('createChannel', { serverId: category.serverId, parentId: category.id }) },
+      { label: 'Edit category', icon: Icon.Settings, onClick: () => openModal('channelSettings', { channelId: category.id }) },
+      { label: 'Delete category', icon: Icon.Trash, danger: true, onClick: () => openModal('confirm', {
+        title: `Delete ${category.name}`,
+        body: 'The channels inside it will be kept.',
+        confirm: 'Delete category',
+        danger: true,
+        onConfirm: () => deleteChannel(category.id),
+      }) },
+    ] : []),
+  ]);
   return (
     <div className="channel-group">
-      <div className="section-head clickable" onClick={() => setOpen((o) => !o)}>
-        <span className={`caret${open ? '' : ' closed'}`}><Icon.ChevronDown size={12} strokeWidth={2.4} /></span>
-        <span>{title}</span>
-        {canManage && (
-          <button className="section-add" onClick={(e) => { e.stopPropagation(); onAdd(); }} data-tip="Create channel">
+      <div className="section-head clickable" onClick={onToggle} onContextMenu={menu}>
+        <span className={`caret${collapsed ? ' closed' : ''}`}><Icon.ChevronDown size={12} strokeWidth={2.4} /></span>
+        <span>{category.name}</span>
+        {canCreate && (
+          <button
+            className="section-add"
+            onClick={(e) => { e.stopPropagation(); openModal('createChannel', { serverId: category.serverId, parentId: category.id }); }}
+            data-tip="Create channel"
+          >
             <Icon.Plus size={15} />
           </button>
         )}
       </div>
-      {channels.filter((c) => open || c.id === activeId).map((c) => (
-        <ChannelRow key={c.id} channel={c} active={c.id === activeId} canManage={canManage} />
+      {channels.filter((c) => !collapsed || c.id === activeId).map((c) => (
+        <ChannelRow key={c.id} channel={c} active={c.id === activeId} server={server} />
       ))}
     </div>
   );
@@ -197,23 +272,32 @@ export function ServerSidebar({ serverId }) {
   const server = useStore((s) => s.servers[serverId]);
   const channelsMap = useStore((s) => s.channels);
   const activeId = useStore((s) => s.view.channelId);
-  const role = useStore((s) => s.members[serverId]?.[s.me.id]?.role);
-  const canManage = role === 'owner' || role === 'admin';
-  const channels = useMemo(() => serverChannels({ channels: channelsMap }, serverId), [channelsMap, serverId]);
+  const isOwner = useStore((s) => s.servers[serverId]?.ownerId === s.me.id);
+  const perms = usePerms(serverId);
+  const tree = useMemo(() => channelTree({ channels: channelsMap }, serverId), [channelsMap, serverId]);
+  const [collapsed, setCollapsed] = useState(loadCollapsed);
 
   if (!server) return null;
   const banner = assetUrl(server.banner);
+  const canSettings = [P.MANAGE_SERVER, P.MANAGE_ROLES, P.MANAGE_CHANNELS, P.KICK_MEMBERS, P.BAN_MEMBERS].some((f) => has(perms, f));
+
+  const toggle = (id) => {
+    const next = { ...collapsed, [id]: !collapsed[id] };
+    setCollapsed(next);
+    try { localStorage.setItem(COLLAPSED_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+  };
 
   const headerMenu = (e) => {
     const rect = e.currentTarget.getBoundingClientRect();
     openMenu({ preventDefault() {}, stopPropagation() {}, clientX: rect.left + 8, clientY: rect.bottom + 6 }, [
-      { label: 'Invite people', icon: Icon.UserPlus, accent: true, onClick: () => openModal('invite', { serverId }) },
-      ...(canManage ? [
-        { label: 'Server settings', icon: Icon.Settings, onClick: () => openModal('serverSettings', { serverId }) },
+      ...(has(perms, P.CREATE_INVITE) ? [{ label: 'Invite people', icon: Icon.UserPlus, accent: true, onClick: () => openModal('invite', { serverId }) }] : []),
+      ...(canSettings ? [{ label: 'Server settings', icon: Icon.Settings, onClick: () => openModal('serverSettings', { serverId }) }] : []),
+      ...(has(perms, P.MANAGE_CHANNELS) ? [
         { label: 'Create channel', icon: Icon.PlusCircle, onClick: () => openModal('createChannel', { serverId }) },
+        { label: 'Create category', icon: Icon.FolderPlus, onClick: () => openModal('createChannel', { serverId, type: 'category' }) },
       ] : []),
-      { label: 'Change nickname', icon: Icon.Edit, onClick: () => openModal('nickname', { serverId }) },
-      ...(role !== 'owner' ? [{ separator: true }, { label: 'Leave server', icon: Icon.Logout, danger: true, onClick: () => openModal('confirm', {
+      ...(has(perms, P.CHANGE_NICKNAME) ? [{ label: 'Change nickname', icon: Icon.Edit, onClick: () => openModal('nickname', { serverId }) }] : []),
+      ...(!isOwner ? [{ separator: true }, { label: 'Leave server', icon: Icon.Logout, danger: true, onClick: () => openModal('confirm', {
         title: `Leave ${server.name}`,
         body: 'You will need a new invite to join again.',
         confirm: 'Leave server',
@@ -233,20 +317,22 @@ export function ServerSidebar({ serverId }) {
         </span>
       </button>
       <div className="sidebar-scroll">
-        <ChannelGroup
-          title="Text Channels"
-          channels={channels.filter((c) => c.type === 'text')}
-          activeId={activeId}
-          canManage={canManage}
-          onAdd={() => openModal('createChannel', { serverId, type: 'text' })}
-        />
-        <ChannelGroup
-          title="Voice Channels"
-          channels={channels.filter((c) => c.type === 'voice')}
-          activeId={activeId}
-          canManage={canManage}
-          onAdd={() => openModal('createChannel', { serverId, type: 'voice' })}
-        />
+        {tree.loose.length > 0 && (
+          <div className="channel-group loose">
+            {tree.loose.map((c) => <ChannelRow key={c.id} channel={c} active={c.id === activeId} server={server} />)}
+          </div>
+        )}
+        {tree.categories.map(({ category, channels }) => (
+          <CategoryGroup
+            key={category.id}
+            category={category}
+            channels={channels}
+            activeId={activeId}
+            server={server}
+            collapsed={Boolean(collapsed[category.id])}
+            onToggle={() => toggle(category.id)}
+          />
+        ))}
       </div>
     </div>
   );
@@ -267,6 +353,10 @@ export function VoicePanel() {
     if (dm) return { title: displayName(s.users[dm.recipientId]), sub: 'Direct call', dmId: dm.id };
     return null;
   });
+  const canVideo = useStore((s) => {
+    const ch = v.roomId && s.channels[v.roomId];
+    return !ch || has(permsFor(s, ch.serverId, ch.id), P.VIDEO);
+  });
   if (!v.roomId || !room) return null;
 
   const quality = ping == null ? 'good' : ping < 120 ? 'good' : ping < 250 ? 'fair' : 'poor';
@@ -285,10 +375,10 @@ export function VoicePanel() {
         </button>
       </div>
       <div className="voice-panel-actions">
-        <button className={`vp-btn${v.cameraStream ? ' on' : ''}`} onClick={toggleCamera} data-tip={v.cameraStream ? 'Turn off camera' : 'Turn on camera'}>
+        <button className={`vp-btn${v.cameraStream ? ' on' : ''}`} onClick={toggleCamera} disabled={!canVideo} data-tip={v.cameraStream ? 'Turn off camera' : 'Turn on camera'}>
           {v.cameraStream ? <Icon.Video size={18} /> : <Icon.VideoOff size={18} />}
         </button>
-        <button className={`vp-btn${v.screenStream ? ' on' : ''}`} onClick={toggleScreen} data-tip={v.screenStream ? 'Stop sharing' : 'Share your screen'}>
+        <button className={`vp-btn${v.screenStream ? ' on' : ''}`} onClick={toggleScreen} disabled={!canVideo} data-tip={v.screenStream ? 'Stop sharing' : 'Share your screen'}>
           <Icon.Screen size={18} />
         </button>
         <button className="vp-btn danger" onClick={leaveVoice} data-tip="Disconnect">
@@ -309,6 +399,8 @@ export function UserPanel() {
   const me = useStore((s) => s.me);
   const v = useVoice();
   if (!me) return null;
+  const muted = v.muted || v.deafened || v.serverMuted || v.serverDeafened;
+  const deaf = v.deafened || v.serverDeafened;
 
   const statusMenu = (e) => {
     const rect = e.currentTarget.getBoundingClientRect();
@@ -339,14 +431,18 @@ export function UserPanel() {
       </button>
       <div className="user-panel-actions">
         <button
-          className={`up-btn${v.muted || v.deafened ? ' off' : ''}`}
+          className={`up-btn${muted ? ' off' : ''}${v.serverMuted ? ' server' : ''}`}
           onClick={() => voice.setMuted(!(v.muted || v.deafened))}
-          data-tip={v.muted || v.deafened ? 'Unmute' : 'Mute'}
+          data-tip={v.serverMuted ? 'Server muted' : muted ? 'Unmute' : 'Mute'}
         >
-          {v.muted || v.deafened ? <Icon.MicOff size={18} /> : <Icon.Mic size={18} />}
+          {muted ? <Icon.MicOff size={18} /> : <Icon.Mic size={18} />}
         </button>
-        <button className={`up-btn${v.deafened ? ' off' : ''}`} onClick={() => voice.setDeafened(!v.deafened)} data-tip={v.deafened ? 'Undeafen' : 'Deafen'}>
-          {v.deafened ? <Icon.HeadphonesOff size={18} /> : <Icon.Headphones size={18} />}
+        <button
+          className={`up-btn${deaf ? ' off' : ''}${v.serverDeafened ? ' server' : ''}`}
+          onClick={() => voice.setDeafened(!v.deafened)}
+          data-tip={v.serverDeafened ? 'Server deafened' : v.deafened ? 'Undeafen' : 'Deafen'}
+        >
+          {deaf ? <Icon.HeadphonesOff size={18} /> : <Icon.Headphones size={18} />}
         </button>
         <button className="up-btn gear" onClick={() => openModal('settings')} data-tip="Settings">
           <Icon.Settings size={18} />

@@ -3,7 +3,7 @@ import { getState, setState, useStore, withKey, withoutKey } from '../lib/store'
 import {
   deleteMessage, discardMessage, editMessage, loadMessages, loadOlder, markRead, openMenu, openModal, openPopout,
   retryMessage, sendMessage, sendTyping, stopTyping, startCall, toast, addFriendById, removeFriend, blockUser, unblockUser,
-  acceptFriend,
+  acceptFriend, mentionsMe,
 } from '../lib/actions';
 import { assetUrl, uploadFile } from '../lib/api';
 import { dayLabel, displayName, fileSize, isSameDay, messageTimestamp, nonce, timeOfDay } from '../lib/format';
@@ -12,6 +12,9 @@ import { useVoice } from '../lib/voice';
 import { Avatar, Button, IconButton, copyText, imageSize, pickFiles, prepareImage } from './ui';
 import { CallStage } from './VoiceStage';
 import { VerifiedMark } from './Badges';
+import { StyledName } from './Cosmetics';
+import { ChannelIcon, isPrivateChannel } from './channelUi';
+import { can, has, P, usePerms } from '../lib/perms';
 import Icon from './Icons';
 
 const GROUP_WINDOW = 7 * 60 * 1000;
@@ -138,7 +141,7 @@ function EditBox({ message, onDone }) {
   );
 }
 
-const MessageItem = memo(function MessageItem({ message: m, grouped, author, member, meId, isOwnerAuthor, canModerate, editing, isNew, serverId, mentionCtx }) {
+const MessageItem = memo(function MessageItem({ message: m, grouped, author, member, meId, isOwnerAuthor, nameColor, canModerate, editing, isNew, serverId, mentionCtx }) {
   const mine = m.authorId === meId;
   const name = displayName(author, member);
   const popout = (e) => openPopout(m.authorId, e.currentTarget.getBoundingClientRect(), serverId);
@@ -160,7 +163,7 @@ const MessageItem = memo(function MessageItem({ message: m, grouped, author, mem
     );
   }
 
-  const mentioned = !mine && mentionCtx.meUsername && new RegExp(`(^|\\W)@(${mentionCtx.meUsername}|everyone)(?![\\w.])`, 'i').test(m.content);
+  const mentioned = !mine && mentionsMe(m);
   const reply = () => {
     setState((s) => ({ replying: withKey(s.replying, m.channelId, m) }));
     window.dispatchEvent(new CustomEvent('bliscord:focus-composer'));
@@ -211,7 +214,7 @@ const MessageItem = memo(function MessageItem({ message: m, grouped, author, mem
       <div className="msg-body">
         {!grouped && (
           <div className="msg-head">
-            <span className="msg-author" onClick={popout} style={{ color: author?.accentColor || undefined }}>{name}</span>
+            <span className="msg-author" onClick={popout}><StyledName user={author} color={nameColor || author?.accentColor}>{name}</StyledName></span>
             <VerifiedMark user={author} size={15} />
             {isOwnerAuthor && <Icon.Crown size={13} className="owner-crown" />}
             <span className="msg-time" data-tip={new Date(m.createdAt).toLocaleString()}>{messageTimestamp(m.createdAt)}</span>
@@ -274,18 +277,31 @@ function MessageList({ channelId, serverId, intro }) {
   useEffect(() => { loadMessages(channelId); }, [channelId]);
 
   const list = bucket?.list || [];
-  const myRole = serverId ? members?.[me.id]?.role : null;
-  const canModerate = myRole === 'owner' || myRole === 'admin';
+  const perms = usePerms(serverId, channelId);
+  const canModerate = Boolean(serverId) && has(perms, P.MANAGE_MESSAGES);
+  const roles = useStore((s) => (serverId ? s.roles[serverId] : null));
+  const myRoles = useStore((s) => (serverId ? s.members[serverId]?.[s.me.id]?.roles : null));
 
   const mentionCtx = useMemo(() => ({
     meId: me.id,
-    meUsername: me.username.replace(/\./g, '\\.'),
+    myRoles: myRoles || [],
+    roles: (roles || []).filter((r) => r.id !== serverId),
     resolveMention: (name) => {
       const lower = name.toLowerCase();
       return Object.values(users).find((u) => u.username.toLowerCase() === lower) || null;
     },
     onMentionClick: (userId, e) => openPopout(userId, e.currentTarget.getBoundingClientRect(), serverId),
-  }), [me.id, me.username, users, serverId]);
+  }), [me.id, users, serverId, roles, myRoles]);
+
+  const roleColors = useMemo(() => {
+    if (!serverId || !roles || !members) return {};
+    const out = {};
+    for (const [uid, m] of Object.entries(members)) {
+      const top = roles.find((r) => r.color && m.roles?.includes(r.id));
+      if (top) out[uid] = top.color;
+    }
+    return out;
+  }, [serverId, roles, members]);
 
   const stick = useCallback(() => {
     const el = scroller.current;
@@ -370,6 +386,7 @@ function MessageList({ channelId, serverId, intro }) {
         member={members?.[m.authorId]}
         meId={me.id}
         isOwnerAuthor={server?.ownerId === m.authorId}
+        nameColor={roleColors[m.authorId]}
         canModerate={canModerate}
         editing={editing === m.id}
         isNew={m.createdAt > openedAt.time}
@@ -434,15 +451,27 @@ function TypingIndicator({ channelId }) {
 function useMentionCandidates(channelId, serverId) {
   const users = useStore((s) => s.users);
   const members = useStore((s) => (serverId ? s.members[serverId] : null));
+  const roles = useStore((s) => (serverId ? s.roles[serverId] : null));
   const dm = useStore((s) => s.dms[channelId]);
   const meId = useStore((s) => s.me.id);
+  const canAll = useStore((s) => (serverId ? can(s, serverId, P.MENTION_EVERYONE, channelId) : false));
   return useMemo(() => {
     const ids = members ? Object.keys(members) : dm ? [dm.recipientId, meId] : [];
-    return ids.map((id) => users[id]).filter(Boolean);
-  }, [users, members, dm, meId]);
+    const out = ids.map((id) => users[id]).filter(Boolean).map((u) => ({
+      key: u.id, kind: 'user', user: u, label: u.displayName, sub: `@${u.username}`, insert: u.username, match: [u.username, u.displayName],
+    }));
+    if (roles) {
+      for (const r of roles) {
+        if (r.id === serverId || (!r.mentionable && !canAll)) continue;
+        out.push({ key: r.id, kind: 'role', role: r, label: `@${r.name}`, insert: r.name, match: [r.name] });
+      }
+      if (canAll) out.push({ key: 'everyone', kind: 'everyone', label: '@everyone', insert: 'everyone', match: ['everyone'] });
+    }
+    return out;
+  }, [users, members, roles, dm, meId, canAll, serverId]);
 }
 
-function Composer({ channelId, serverId, placeholder, files, setFiles, disabled }) {
+function Composer({ channelId, serverId, placeholder, files, setFiles, disabled, canAttach = true }) {
   const [text, setText] = useState(drafts[channelId] || '');
   const [sending, setSending] = useState(false);
   const [mention, setMention] = useState(null);
@@ -473,8 +502,8 @@ function Composer({ channelId, serverId, placeholder, files, setFiles, disabled 
     if (!mention) return [];
     const qy = mention.query.toLowerCase();
     return candidates
-      .filter((u) => u.username.toLowerCase().startsWith(qy) || u.displayName.toLowerCase().startsWith(qy))
-      .slice(0, 8);
+      .filter((c) => c.match.some((m) => m.toLowerCase().startsWith(qy)))
+      .slice(0, 10);
   }, [mention, candidates]);
 
   const updateMention = (value, caret) => {
@@ -483,15 +512,15 @@ function Composer({ channelId, serverId, placeholder, files, setFiles, disabled 
     setMention(m ? { query: m[2], start: caret - m[2].length - 1, index: 0 } : null);
   };
 
-  const insertMention = (user) => {
+  const insertMention = (item) => {
     const el = ref.current;
     const caret = el.selectionStart;
-    const next = `${text.slice(0, mention.start)}@${user.username} ${text.slice(caret)}`;
+    const next = `${text.slice(0, mention.start)}@${item.insert} ${text.slice(caret)}`;
     setText(next);
     drafts[channelId] = next;
     setMention(null);
     requestAnimationFrame(() => {
-      const pos = mention.start + user.username.length + 2;
+      const pos = mention.start + item.insert.length + 2;
       el.focus();
       el.setSelectionRange(pos, pos);
     });
@@ -566,16 +595,18 @@ function Composer({ channelId, serverId, placeholder, files, setFiles, disabled 
     <div className="composer-wrap">
       {mention && matches.length > 0 && (
         <div className="mention-pop">
-          {matches.map((u, i) => (
+          {matches.map((c, i) => (
             <button
-              key={u.id}
+              key={c.key}
               className={`mention-opt${i === mention.index ? ' active' : ''}`}
-              onMouseDown={(e) => { e.preventDefault(); insertMention(u); }}
+              onMouseDown={(e) => { e.preventDefault(); insertMention(c); }}
               onMouseEnter={() => setMention((m) => ({ ...m, index: i }))}
             >
-              <Avatar user={u} size={24} />
-              <span className="mention-name">{u.displayName}</span>
-              <span className="mention-user">@{u.username}</span>
+              {c.kind === 'user' ? <Avatar user={c.user} size={24} /> : (
+                <span className="mention-role-icon" style={{ color: c.role?.color || undefined }}><Icon.At size={16} /></span>
+              )}
+              <span className="mention-name" style={{ color: c.role?.color || undefined }}>{c.label}</span>
+              {c.sub && <span className="mention-user">{c.sub}</span>}
             </button>
           ))}
         </div>
@@ -604,14 +635,16 @@ function Composer({ channelId, serverId, placeholder, files, setFiles, disabled 
           </div>
         )}
         <div className="composer-row">
-          <button
-            className="composer-attach"
-            onClick={async () => addFiles(await pickFiles({ multiple: true }), setFiles)}
-            data-tip="Upload a file"
-            disabled={disabled}
-          >
-            <Icon.PlusCircle size={22} />
-          </button>
+          {canAttach && (
+            <button
+              className="composer-attach"
+              onClick={async () => addFiles(await pickFiles({ multiple: true }), setFiles)}
+              data-tip="Upload a file"
+              disabled={disabled}
+            >
+              <Icon.PlusCircle size={22} />
+            </button>
+          )}
           <textarea
             ref={ref}
             className="composer-input"
@@ -660,7 +693,7 @@ async function addFiles(list, setFiles) {
 /* Chat pane (list + composer + drop zone)                             */
 /* ------------------------------------------------------------------ */
 
-function ChatPane({ channelId, serverId, placeholder, intro, disabled }) {
+function ChatPane({ channelId, serverId, placeholder, intro, disabled, canAttach = true }) {
   const [files, setFiles] = useState([]);
   const [dragging, setDragging] = useState(false);
   const depth = useRef(0);
@@ -677,11 +710,11 @@ function ChatPane({ channelId, serverId, placeholder, intro, disabled }) {
         e.preventDefault();
         depth.current = 0;
         setDragging(false);
-        if (!disabled) addFiles([...e.dataTransfer.files], setFiles);
+        if (!disabled && canAttach) addFiles([...e.dataTransfer.files], setFiles);
       }}
     >
       <MessageList channelId={channelId} serverId={serverId} intro={intro} />
-      <Composer channelId={channelId} serverId={serverId} placeholder={placeholder} files={files} setFiles={setFiles} disabled={disabled} />
+      <Composer channelId={channelId} serverId={serverId} placeholder={placeholder} files={files} setFiles={setFiles} disabled={disabled} canAttach={canAttach} />
       {dragging && (
         <div className="drop-overlay">
           <div className="drop-card">
@@ -701,17 +734,19 @@ function ChatPane({ channelId, serverId, placeholder, intro, disabled }) {
 export function ChannelView({ channelId }) {
   const channel = useStore((s) => s.channels[channelId]);
   const showMembers = useStore((s) => s.showMembers);
-  const canManage = useStore((s) => {
-    const role = s.members[channel?.serverId]?.[s.me.id]?.role;
-    return role === 'owner' || role === 'admin';
-  });
+  const server = useStore((s) => s.servers[s.channels[channelId]?.serverId]);
+  const perms = usePerms(channel?.serverId, channelId);
+  const isPrivate = useStore((s) => isPrivateChannel(s, s.channels[channelId]));
   if (!channel) return null;
+  const canManage = has(perms, P.MANAGE_CHANNELS) || has(perms, P.MANAGE_ROLES);
+  const canSend = has(perms, P.SEND_MESSAGES);
+  const canRead = has(perms, P.READ_HISTORY);
 
   const intro = (
     <div className="channel-intro">
-      <div className="intro-badge"><Icon.Hash size={36} /></div>
+      <div className="intro-badge"><ChannelIcon channel={channel} server={server} isPrivate={isPrivate} size={36} /></div>
       <h1>Welcome to #{channel.name}</h1>
-      <p>This is the start of the #{channel.name} channel.</p>
+      <p>This is the start of the #{channel.name} {channel.type === 'announcement' ? 'announcement channel' : 'channel'}.</p>
       {canManage && (
         <Button variant="soft" onClick={() => openModal('channelSettings', { channelId })}>
           <Icon.Edit size={15} /> Edit channel
@@ -722,7 +757,8 @@ export function ChannelView({ channelId }) {
 
   return (
     <div className="chat">
-      <ChatHeader icon={<Icon.Hash size={22} className="header-icon" />} title={channel.name} topic={channel.topic}>
+      <ChatHeader icon={<ChannelIcon channel={channel} server={server} isPrivate={isPrivate} size={22} className="header-icon" />} title={channel.name} topic={channel.topic}>
+        {channel.slowmode > 0 && <span className="slowmode-chip" data-tip={`Slowmode: ${channel.slowmode}s`}><Icon.Clock size={16} /></span>}
         <IconButton
           icon={Icon.Users}
           tip={showMembers ? 'Hide members' : 'Show members'}
@@ -731,7 +767,15 @@ export function ChannelView({ channelId }) {
           onClick={() => setState((s) => ({ showMembers: !s.showMembers }))}
         />
       </ChatHeader>
-      <ChatPane channelId={channelId} serverId={channel.serverId} placeholder={`Message #${channel.name}`} intro={intro} />
+      <ChatPane
+        key={canRead ? 'r' : 'n'}
+        channelId={channelId}
+        serverId={channel.serverId}
+        placeholder={canSend ? `Message #${channel.name}` : 'You do not have permission to send messages in this channel'}
+        intro={intro}
+        disabled={!canSend}
+        canAttach={has(perms, P.ATTACH_FILES)}
+      />
     </div>
   );
 }

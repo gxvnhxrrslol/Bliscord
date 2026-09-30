@@ -352,6 +352,47 @@ export const Icon = {
       <rect x="4" y="13" width="7" height="7" rx="1.5" /><rect x="13" y="13" width="7" height="7" rx="1.5" />
     </Svg>
   ),
+  Megaphone: (p) => (
+    <Svg {...p}>
+      <path d="M4 10v4a1 1 0 0 0 1 1h2.5l6.5 4V5L7.5 9H5a1 1 0 0 0-1 1zM17 9a3.5 3.5 0 0 1 0 6M7.5 15l1 4.5" />
+    </Svg>
+  ),
+  Book: (p) => (
+    <Svg {...p}>
+      <path d="M5 4.5A1.5 1.5 0 0 1 6.5 3H19v15H6.5A1.5 1.5 0 0 0 5 19.5zM5 19.5A1.5 1.5 0 0 0 6.5 21H19M9 7.5h6M9 11h4" />
+    </Svg>
+  ),
+  HashLock: (p) => (
+    <Svg {...p}>
+      <path d="M9.5 4L7.5 20M16.2 4l-.8 6.5M5 9h15M4 15h8" />
+      <rect x="14.5" y="15.5" width="7" height="5.5" rx="1.2" />
+      <path d="M16 15.5v-1.3a2 2 0 0 1 4 0v1.3" />
+    </Svg>
+  ),
+  SpeakerLock: (p) => (
+    <Svg {...p}>
+      <path d="M3 9.5h3L10.5 6v12L6 14.5H3zM13.5 9.5a3.5 3.5 0 0 1 .6 4" />
+      <rect x="14.5" y="15.5" width="7" height="5.5" rx="1.2" />
+      <path d="M16 15.5v-1.3a2 2 0 0 1 4 0v1.3" />
+    </Svg>
+  ),
+  Tag: (p) => (
+    <Svg {...p}>
+      <path d="M3.5 12.2V4.5a1 1 0 0 1 1-1h7.7a1 1 0 0 1 .7.3l7.8 7.8a1 1 0 0 1 0 1.4l-7.7 7.7a1 1 0 0 1-1.4 0l-7.8-7.8a1 1 0 0 1-.3-.7z" />
+      <circle cx="8" cy="8" r="1.5" />
+    </Svg>
+  ),
+  FolderPlus: (p) => (
+    <Svg {...p}>
+      <path d="M3.5 7.5A2.5 2.5 0 0 1 6 5h3.5l2 2.5H18a2.5 2.5 0 0 1 2.5 2.5v7.5A2.5 2.5 0 0 1 18 20H6a2.5 2.5 0 0 1-2.5-2.5zM12 11v5M9.5 13.5h5" />
+    </Svg>
+  ),
+  Clock: (p) => (
+    <Svg {...p}>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 7v5l3 2" />
+    </Svg>
+  ),
   Code: (p) => <Svg {...p}><path d="M8 7.5L3.5 12 8 16.5M16 7.5l4.5 4.5-4.5 4.5M13.6 5.5l-3.2 13" /></Svg>,
   Seal: ({ size = 16, className = '' }) => (
     <svg width={size} height={size} viewBox="0 0 24 24" className={`icon ${className}`} aria-hidden="true">

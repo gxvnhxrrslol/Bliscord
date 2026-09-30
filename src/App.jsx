@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { useStore } from './lib/store';
 import { boot, logout } from './lib/actions';
-import { native } from './lib/api';
+import { assetUrl, native } from './lib/api';
 import { TooltipLayer, Spinner } from './components/ui';
 import TitleBar from './components/TitleBar';
 import AuthScreen from './components/AuthScreen';
@@ -25,6 +25,9 @@ function useTheme() {
     root.dataset.scene = settings.glassScene;
     root.dataset.density = settings.density;
     root.dataset.motion = settings.reduceMotion ? 'reduced' : 'full';
+    root.dataset.bg = settings.customBackground ? 'custom' : 'scene';
+    root.style.setProperty('--bg-image', settings.customBackground ? `url("${assetUrl(settings.customBackground)}")` : 'none');
+    root.style.setProperty('--bg-dim', String((settings.backgroundDim ?? 35) / 100));
     const rgb = hexToRgb(settings.accent);
     root.style.setProperty('--accent', settings.accent);
     root.style.setProperty('--accent-rgb', rgb.join(','));
@@ -74,6 +77,7 @@ function GlassFilters() {
 function Backdrop() {
   return (
     <div className="backdrop" aria-hidden="true">
+      <div className="backdrop-image" />
       <div className="orb o1" />
       <div className="orb o2" />
       <div className="orb o3" />

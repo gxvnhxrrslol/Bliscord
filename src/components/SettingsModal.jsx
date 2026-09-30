@@ -7,6 +7,7 @@ import { colorFor, fullDate } from '../lib/format';
 import { Avatar, Button, Field, Select, Slider, Switch, isTopLayer, pickFiles, uploadImage } from './ui';
 import { Badges, VerifiedMark } from './Badges';
 import { showChangelog } from '../lib/whatsnew';
+import { DECORATIONS, EFFECTS, NAME_STYLES, ProfileEffect, StyledName, profileThemeStyle } from './Cosmetics';
 import Icon from './Icons';
 
 /* ---------------- Settings layer shell ---------------- */
@@ -154,17 +155,40 @@ function ColorPick({ value, onChange, allowNone = true }) {
   );
 }
 
+function OptionTiles({ options, value, onChange, render }) {
+  return (
+    <div className="option-tiles">
+      <button className={`option-tile none${!value ? ' active' : ''}`} onClick={() => onChange(undefined)}>
+        <span className="option-art"><Icon.Block size={22} /></span>
+        <span className="option-name">None</span>
+      </button>
+      {options.map((o) => (
+        <button key={o.id} className={`option-tile${value === o.id ? ' active' : ''}`} onClick={() => onChange(o.id)}>
+          <span className="option-art">{render(o.id)}</span>
+          <span className="option-name">{o.label}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function ProfileTab() {
   const me = useStore((s) => s.me);
   const initial = () => ({
     displayName: me.displayName, avatar: me.avatar, banner: me.banner, bannerColor: me.bannerColor, accentColor: me.accentColor,
-    pronouns: me.pronouns, customStatus: me.customStatus, bio: me.bio,
+    pronouns: me.pronouns, customStatus: me.customStatus, bio: me.bio, profile: { ...(me.profile || {}) },
   });
   const [draft, setDraft] = useState(initial);
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(null);
   const dirty = JSON.stringify(draft) !== JSON.stringify(initial());
   const set = (k) => (v) => setDraft((d) => ({ ...d, [k]: v?.target ? v.target.value : v }));
+  const setCosmetic = (k, v) => setDraft((d) => {
+    const profile = { ...d.profile };
+    if (v === undefined || v === null) delete profile[k];
+    else profile[k] = v;
+    return { ...d, profile };
+  });
 
   const upload = async (key, max) => {
     const [file] = await pickFiles({ accept: 'image/png,image/jpeg,image/gif,image/webp' });
@@ -191,6 +215,8 @@ function ProfileTab() {
 
   const preview = { ...me, ...draft };
   const banner = assetUrl(preview.banner);
+  const theme = draft.profile.themeColors;
+  const demoUser = (patch) => ({ ...preview, profile: { ...draft.profile, ...patch } });
 
   return (
     <>
@@ -232,13 +258,59 @@ function ProfileTab() {
               <span className="count">{300 - (draft.bio || '').length}</span>
             </div>
           </Field>
+
+          <div className="settings-divider" />
+          <h2 className="subhead">Profile style</h2>
+          <Field label="Profile theme">
+            <div className="theme-colors">
+              <Switch checked={Boolean(theme)} onChange={(v) => setCosmetic('themeColors', v ? [draft.accentColor || '#4f7cff', '#b56bff'] : null)} />
+              {theme && (
+                <>
+                  <label className="theme-color" style={{ background: theme[0] }} data-tip="Primary">
+                    <input type="color" value={theme[0]} onChange={(e) => setCosmetic('themeColors', [e.target.value, theme[1]])} />
+                  </label>
+                  <label className="theme-color" style={{ background: theme[1] }} data-tip="Accent">
+                    <input type="color" value={theme[1]} onChange={(e) => setCosmetic('themeColors', [theme[0], e.target.value])} />
+                  </label>
+                </>
+              )}
+            </div>
+          </Field>
+          <Field label="Avatar decoration">
+            <OptionTiles
+              options={DECORATIONS}
+              value={draft.profile.decoration}
+              onChange={(v) => setCosmetic('decoration', v)}
+              render={(id) => <Avatar user={demoUser({ decoration: id })} size={40} />}
+            />
+          </Field>
+          <Field label="Profile effect">
+            <OptionTiles
+              options={EFFECTS}
+              value={draft.profile.effect}
+              onChange={(v) => setCosmetic('effect', v)}
+              render={(id) => <span className="effect-swatch"><ProfileEffect id={id} /></span>}
+            />
+          </Field>
+          <Field label="Name style">
+            <OptionTiles
+              options={NAME_STYLES}
+              value={draft.profile.nameStyle}
+              onChange={(v) => setCosmetic('nameStyle', v)}
+              render={(id) => <StyledName user={demoUser({ nameStyle: id })} color={draft.accentColor}>Aa</StyledName>}
+            />
+          </Field>
         </div>
         <div className="profile-preview">
           <span className="field-label">Preview</span>
-          <div className="profile-card compact preview" style={{ '--profile-accent': preview.accentColor || preview.bannerColor || colorFor(me.id) }}>
+          <div
+            className={`profile-card compact preview${theme ? ' themed' : ''}`}
+            style={{ '--profile-accent': preview.accentColor || preview.bannerColor || colorFor(me.id), ...profileThemeStyle(preview) }}
+          >
             <div className="profile-banner" style={{ background: banner ? undefined : preview.bannerColor || colorFor(me.id) }}>
               {banner && <img src={banner} alt="" />}
             </div>
+            <ProfileEffect id={draft.profile.effect} />
             <div className="profile-avatar-wrap">
               <button className="avatar-edit" onClick={() => upload('avatar', 512)}>
                 <Avatar user={preview} size={84} status={me.presence} className="profile-avatar" />
@@ -248,7 +320,7 @@ function ProfileTab() {
             <Badges user={me} className="profile-badges" />
             <div className="profile-body">
               <div className="profile-names">
-                <h3 style={{ color: preview.accentColor || undefined }}>{preview.displayName || me.username}<VerifiedMark user={me} size={18} /></h3>
+                <h3><StyledName user={preview} color={preview.accentColor}>{preview.displayName || me.username}</StyledName><VerifiedMark user={me} size={18} /></h3>
                 <div className="profile-username">@{me.username}{preview.pronouns && <span className="profile-pronouns">{preview.pronouns}</span>}</div>
               </div>
               {preview.customStatus && <div className="profile-status">{preview.customStatus}</div>}
@@ -294,6 +366,18 @@ const ACCENTS = ['#4f7cff', '#2f8cff', '#23b5ff', '#6a5cff', '#9b5cff', '#1fc7a8
 
 function AppearanceTab() {
   const s = useStore((st) => st.settings);
+  const [bgBusy, setBgBusy] = useState(false);
+  const pickBackground = async () => {
+    const [file] = await pickFiles({ accept: 'image/png,image/jpeg,image/gif,image/webp' });
+    if (!file) return;
+    setBgBusy(true);
+    try {
+      updateSettings({ customBackground: await uploadImage(file, 2560) });
+    } catch (err) {
+      toast(err.message, 'error');
+    }
+    setBgBusy(false);
+  };
   return (
     <>
       <h1>Appearance</h1>
@@ -312,19 +396,38 @@ function AppearanceTab() {
           ))}
         </div>
       </div>
-      {s.theme.startsWith('glass') && (
-        <div className="settings-block">
-          <h3>Scene</h3>
-          <div className="scene-row">
-            {SCENES.map((sc) => (
-              <button key={sc.id} className={`scene-chip sc-${sc.id}${s.glassScene === sc.id ? ' active' : ''}`} onClick={() => updateSettings({ glassScene: sc.id })}>
-                <span className="scene-swatch" />
-                <span>{sc.label}</span>
-              </button>
-            ))}
-          </div>
+      <div className="settings-block">
+        <h3>Background</h3>
+        <div className="scene-row">
+          {s.theme.startsWith('glass') && SCENES.map((sc) => (
+            <button
+              key={sc.id}
+              className={`scene-chip sc-${sc.id}${!s.customBackground && s.glassScene === sc.id ? ' active' : ''}`}
+              onClick={() => updateSettings({ glassScene: sc.id, customBackground: null })}
+            >
+              <span className="scene-swatch" />
+              <span>{sc.label}</span>
+            </button>
+          ))}
+          {!s.theme.startsWith('glass') && (
+            <button className={`scene-chip${!s.customBackground ? ' active' : ''}`} onClick={() => updateSettings({ customBackground: null })}>
+              <span className="scene-swatch plain" />
+              <span>Theme default</span>
+            </button>
+          )}
+          <button className={`scene-chip${s.customBackground ? ' active' : ''}`} onClick={pickBackground}>
+            <span className="scene-swatch custom" style={{ backgroundImage: s.customBackground ? `url(${assetUrl(s.customBackground)})` : undefined }}>
+              {!s.customBackground && (bgBusy ? <span className="spinner" style={{ width: 12, height: 12 }} /> : <Icon.Upload size={14} />)}
+            </span>
+            <span>{s.customBackground ? 'Change image' : 'Custom image'}</span>
+          </button>
         </div>
-      )}
+        {s.customBackground && (
+          <Field label="Dim">
+            <Slider value={s.backgroundDim ?? 35} min={0} max={85} onChange={(v) => updateSettings({ backgroundDim: v })} format={(v) => `${v}%`} />
+          </Field>
+        )}
+      </div>
       <div className="settings-block">
         <h3>Accent</h3>
         <div className="swatches big">
@@ -455,6 +558,7 @@ function VoiceTab() {
   const setOutput = async (id) => { updateSettings({ outputDeviceId: id }); await voice.setOutputDevice(id); };
   const setCamera = async (id) => { updateSettings({ videoDeviceId: id }); if (voice.cameraStream) await voice.switchCamera(id).catch(() => {}); };
   const setProc = async (k, v) => { updateSettings({ [k]: v }); await voice.reloadMic(); };
+  const stereo = s.micChannels === 'stereo';
 
   return (
     <>
@@ -475,10 +579,18 @@ function VoiceTab() {
         <MicMeter />
       </div>
       <div className="settings-block">
+        <h3>Microphone</h3>
+        <div className="seg">
+          {[['mono', 'Mono'], ['stereo', 'Stereo']].map(([k, label]) => (
+            <button key={k} className={(s.micChannels || 'mono') === k ? 'active' : ''} onClick={() => setProc('micChannels', k)}>{label}</button>
+          ))}
+        </div>
+      </div>
+      <div className="settings-block">
         <h3>Processing</h3>
-        <div className="switch-row"><span>Noise suppression</span><Switch checked={s.noiseSuppression} onChange={(v) => setProc('noiseSuppression', v)} /></div>
-        <div className="switch-row"><span>Echo cancellation</span><Switch checked={s.echoCancellation} onChange={(v) => setProc('echoCancellation', v)} /></div>
-        <div className="switch-row"><span>Automatic gain control</span><Switch checked={s.autoGainControl} onChange={(v) => setProc('autoGainControl', v)} /></div>
+        <div className="switch-row"><span>Noise suppression</span><Switch checked={!stereo && s.noiseSuppression} disabled={stereo} onChange={(v) => setProc('noiseSuppression', v)} /></div>
+        <div className="switch-row"><span>Echo cancellation</span><Switch checked={!stereo && s.echoCancellation} disabled={stereo} onChange={(v) => setProc('echoCancellation', v)} /></div>
+        <div className="switch-row"><span>Automatic gain control</span><Switch checked={!stereo && s.autoGainControl} disabled={stereo} onChange={(v) => setProc('autoGainControl', v)} /></div>
       </div>
       <div className="settings-block">
         <h3>Camera</h3>
