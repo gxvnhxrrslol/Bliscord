@@ -11,6 +11,7 @@ import { displayName } from '../lib/format';
 import { Avatar, Button, Field, ServerGlyph, Spinner, Switch, copyText, pickFiles, uploadImage, Modal } from './ui';
 import SettingsModal from './SettingsModal';
 import ServerSettingsModal from './ServerSettings';
+import WhatsNewModal from './WhatsNew';
 import Icon from './Icons';
 
 /* ---------------- Image picker ---------------- */
@@ -361,7 +362,8 @@ function ScreenPickerModal() {
   const [sources, setSources] = useState(null);
   const [tab, setTab] = useState('screen');
   const [selected, setSelected] = useState(null);
-  const [audio, setAudio] = useState(false);
+  const audio = useStore((s) => s.settings.screenAudio);
+  const setAudio = (v) => updateSettings({ screenAudio: v });
 
   useEffect(() => {
     let alive = true;
@@ -409,7 +411,7 @@ function ScreenPickerModal() {
               </div>
             </div>
             <label className="inline-switch">
-              <span className="field-label">Sound</span>
+              <span className="field-label">Stream audio</span>
               <Switch checked={audio} onChange={setAudio} />
             </label>
           </div>
@@ -540,5 +542,6 @@ export const MODALS = {
   newDm: NewDmModal,
   settings: SettingsModal,
   serverSettings: ServerSettingsModal,
+  whatsNew: WhatsNewModal,
 };
 

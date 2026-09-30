@@ -6,6 +6,8 @@ const fs = require('node:fs');
 const { autoUpdater } = require('electron-updater');
 
 const isDev = Boolean(process.env.VITE_DEV_SERVER_URL);
+// Unpackaged builds use their own profile so they can run next to the installed app.
+if (!app.isPackaged) app.setPath('userData', `${app.getPath('userData')}-dev`);
 const ICON = path.join(__dirname, 'icon.png');
 const STATE_FILE = path.join(app.getPath('userData'), 'window-state.json');
 

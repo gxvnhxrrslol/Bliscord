@@ -37,6 +37,8 @@ jobs:
 
       - run: npx vite build
 
+      - run: node scripts/release-notes.mjs
+
       - name: Build installer and publish release
         run: npx electron-builder --win --publish always -c.publish.owner=${{ github.repository_owner }} -c.publish.repo=${{ github.event.repository.name }}
         env:

@@ -1,0 +1,26 @@
+[
+  {
+    "version": "1.1.0",
+    "date": "2026-09-29",
+    "title": "Sharper streams",
+    "items": [
+      "Screen shares and webcams look much sharper, starting at full quality instead of warming up",
+      "Screen share sends your game or video audio in stereo, separate from your mic and without noise suppression",
+      "Right-click someone's stream to change its volume, mute its audio or hide it",
+      "Webcams now send in 1080p",
+      "Profile badges and verified checkmarks",
+      "Update and news popups like this one"
+    ]
+  },
+  {
+    "version": "1.0.0",
+    "date": "2026-09-29",
+    "title": "Bliscord is here",
+    "items": [
+      "Servers, channels, direct messages and friends",
+      "Voice channels, calls, webcams and screen sharing",
+      "Profiles with avatars, banners, bios and custom status",
+      "Dark, Light, Midnight, Liquid Glass and Frost Glass themes"
+    ]
+  }
+]

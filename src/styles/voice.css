@@ -179,3 +179,16 @@
 .btn-call.accept { background: var(--success); color: #fff; box-shadow: 0 10px 26px -8px rgba(var(--success-rgb), 0.9); }
 .btn-call.accept:hover { background: #4fe08a; }
 .btn-call.decline { background: var(--danger); color: #fff; }
+.tile-hidden {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 18px;
+  border-radius: 14px;
+  color: rgba(255, 255, 255, 0.75);
+  font-weight: 600;
+  background: rgba(0, 0, 0, 0.3);
+  transition: background 0.15s, color 0.15s;
+}
+.tile-hidden:hover { background: rgba(0, 0, 0, 0.45); color: #fff; }

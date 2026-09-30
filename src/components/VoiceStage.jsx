@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { getState, updateSettings, useStore } from '../lib/store';
+import { getState, setState, updateSettings, useStore, withKey, withoutKey } from '../lib/store';
 import { acceptCall, declineCall, joinVoice, leaveVoice, openMenu, openPopout } from '../lib/actions';
 import { useVoice, voice } from '../lib/voice';
 import { toggleCamera, toggleScreen } from '../lib/media';
@@ -67,9 +67,44 @@ function VolumeItem({ userId }) {
   );
 }
 
+function toggleStreamFlag(key, userId) {
+  setState((s) => ({ [key]: s[key][userId] ? withoutKey(s[key], userId) : withKey(s[key], userId, true) }));
+  voice.refreshVolumes();
+}
+
+function StreamVolumeItem({ userId }) {
+  const vol = useStore((s) => s.settings.streamVolumes?.[userId] ?? 100);
+  return (
+    <div className="menu-custom">
+      <span className="menu-custom-label">Stream volume</span>
+      <Slider
+        value={vol}
+        onChange={(v) => {
+          updateSettings({ streamVolumes: { ...getState().settings.streamVolumes, [userId]: v } });
+          voice.refreshVolumes();
+        }}
+        format={(v) => `${v}%`}
+      />
+    </div>
+  );
+}
+
+function streamMenu(e, userId) {
+  const { mutedStreams, hiddenStreams } = getState();
+  openMenu(e, [
+    { render: () => <StreamVolumeItem userId={userId} /> },
+    { separator: true },
+    { label: 'Mute stream audio', icon: Icon.SpeakerOff, checked: Boolean(mutedStreams[userId]), onClick: () => toggleStreamFlag('mutedStreams', userId) },
+    { label: hiddenStreams[userId] ? 'Show stream' : 'Hide stream', icon: hiddenStreams[userId] ? Icon.Eye : Icon.EyeOff, onClick: () => toggleStreamFlag('hiddenStreams', userId) },
+  ]);
+}
+
 function Tile({ tileKey, kind, userId, stream, state, speaking, isSelf, focused, onFocus, connecting, calling }) {
   const user = useStore((s) => s.users[userId]);
-  const [videoRef, hasFrames] = useVideo(stream);
+  const isStream = kind === 'screen' && !isSelf;
+  const hidden = useStore((s) => isStream && Boolean(s.hiddenStreams[userId]));
+  const streamMuted = useStore((s) => isStream && Boolean(s.mutedStreams[userId]));
+  const [videoRef, hasFrames] = useVideo(hidden ? null : stream);
   const box = useRef(null);
   const showVideo = Boolean(stream) && hasFrames;
   const color = user?.bannerColor || user?.accentColor || colorFor(userId);
@@ -87,7 +122,7 @@ function Tile({ tileKey, kind, userId, stream, state, speaking, isSelf, focused,
       className={`tile tile-${kind}${speaking && kind === 'user' ? ' speaking' : ''}${focused ? ' focused' : ''}${showVideo ? ' has-video' : ''}${calling ? ' calling' : ''}`}
       style={{ '--tile-color': color }}
       onClick={() => onFocus(tileKey)}
-      onContextMenu={(e) => !isSelf && volumeMenu(e, userId)}
+      onContextMenu={(e) => (isStream ? streamMenu(e, userId) : !isSelf && volumeMenu(e, userId))}
     >
       {!showVideo && (
         <div className="tile-idle">
@@ -97,6 +132,11 @@ function Tile({ tileKey, kind, userId, stream, state, speaking, isSelf, focused,
               <Avatar user={user} size={focused ? 96 : 72} speaking={speaking} />
               {calling && <span className="calling-ring" />}
             </div>
+          ) : hidden ? (
+            <button className="tile-hidden" onClick={(e) => { e.stopPropagation(); toggleStreamFlag('hiddenStreams', userId); }}>
+              <Icon.EyeOff size={26} />
+              <span>Show stream</span>
+            </button>
           ) : (
             <div className="tile-screen-wait"><Icon.Screen size={34} /></div>
           )}
@@ -113,6 +153,7 @@ function Tile({ tileKey, kind, userId, stream, state, speaking, isSelf, focused,
       <div className="tile-label">
         {kind === 'screen' && <span className="live-badge">LIVE</span>}
         <span>{displayName(user)}</span>
+        {streamMuted && <Icon.SpeakerOff size={14} />}
         {kind === 'user' && (state?.deafened ? <Icon.HeadphonesOff size={14} /> : state?.muted && <Icon.MicOff size={14} />)}
       </div>
       {connecting && !isSelf && <div className="tile-connecting"><span className="spinner" style={{ width: 18, height: 18 }} /></div>}

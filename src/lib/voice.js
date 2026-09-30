@@ -4,15 +4,61 @@ import { getState } from './store';
 import { playSound } from './sounds';
 
 export const SCREEN_QUALITY = {
-  '720p30': { label: '720p', fps: 30, width: 1280, height: 720, bitrate: 2_500_000 },
-  '1080p30': { label: '1080p', fps: 30, width: 1920, height: 1080, bitrate: 4_500_000 },
-  '1080p60': { label: '1080p', fps: 60, width: 1920, height: 1080, bitrate: 8_000_000 },
-  '1440p60': { label: '1440p', fps: 60, width: 2560, height: 1440, bitrate: 12_000_000 },
+  '720p30': { label: '720p', fps: 30, width: 1280, height: 720, bitrate: 4_000_000 },
+  '1080p30': { label: '1080p', fps: 30, width: 1920, height: 1080, bitrate: 6_000_000 },
+  '1080p60': { label: '1080p', fps: 60, width: 1920, height: 1080, bitrate: 10_000_000 },
+  '1440p60': { label: '1440p', fps: 60, width: 2560, height: 1440, bitrate: 16_000_000 },
 };
 
-const CAMERA_BITRATE = 1_500_000;
+export const VIDEO_CODECS = {
+  vp9: { label: 'VP9', order: ['video/VP9', 'video/AV1', 'video/H264', 'video/VP8'] },
+  av1: { label: 'AV1', order: ['video/AV1', 'video/VP9', 'video/H264', 'video/VP8'] },
+  h264: { label: 'H.264', order: ['video/H264', 'video/VP9', 'video/AV1', 'video/VP8'] },
+  vp8: { label: 'VP8', order: ['video/VP8', 'video/VP9', 'video/H264', 'video/AV1'] },
+};
+
+const CAMERA_BITRATE = 3_500_000;
+const MIC_BITRATE = 96_000;
+const STREAM_AUDIO_BITRATE = 192_000;
 const REMOTE_SPEAKING_THRESHOLD = 0.012;
 const GATE_HOLD_MS = 280;
+
+/** Put the preferred video codec first on every video transceiver. */
+function preferCodecs(pc) {
+  const caps = RTCRtpReceiver.getCapabilities?.('video')?.codecs;
+  if (!caps) return;
+  const order = (VIDEO_CODECS[getState().settings.videoCodec] || VIDEO_CODECS.vp9).order;
+  const rank = (c) => {
+    const i = order.indexOf(c.mimeType);
+    return i === -1 ? order.length : i;
+  };
+  const sorted = [...caps].sort((a, b) => rank(a) - rank(b));
+  for (const t of pc.getTransceivers()) {
+    if (t.stopped || t.receiver.track?.kind !== 'video' || !t.setCodecPreferences) continue;
+    try { t.setCodecPreferences(sorted); } catch { /* transceiver not ready */ }
+  }
+}
+
+/**
+ * Tune the remote description before applying it. What the other side
+ * advertises decides how we send: stereo high-bitrate Opus (for stream audio)
+ * and a high starting video bitrate so streams start sharp instead of ramping.
+ */
+function tuneRemoteSdp(sdp) {
+  const codecOf = {};
+  for (const m of sdp.matchAll(/a=rtpmap:(\d+) ([\w-]+)\//g)) codecOf[m[1]] = m[2].toUpperCase();
+  const videoParams = 'x-google-start-bitrate=4000;x-google-min-bitrate=600;x-google-max-bitrate=20000';
+  const withFmtp = new Set();
+  let out = sdp.replace(/a=fmtp:(\d+) ([^\r\n]*)/g, (line, pt, params) => {
+    withFmtp.add(pt);
+    const codec = codecOf[pt];
+    if (codec === 'OPUS' && !params.includes('stereo=')) return `${line};stereo=1;sprop-stereo=1;maxaveragebitrate=256000`;
+    if (['VP8', 'VP9', 'H264', 'AV1'].includes(codec) && !params.includes('x-google-start-bitrate')) return `${line};${videoParams}`;
+    return line;
+  });
+  out = out.replace(/a=rtpmap:(\d+) (VP8|VP9|AV1)\/90000\r?\n/gi, (line, pt) => (withFmtp.has(pt) ? line : `${line}a=fmtp:${pt} ${videoParams}\r\n`));
+  return out;
+}
 
 function rms(analyser, buf) {
   analyser.getFloatTimeDomainData(buf);
@@ -92,6 +138,7 @@ class VoiceEngine {
     }
     const ctx = new AudioContext({ latencyHint: 'interactive' });
     const dest = ctx.createMediaStreamDestination();
+    dest.channelCount = 1;
     const gate = ctx.createGain();
     gate.gain.value = 0;
     const inputGain = ctx.createGain();
@@ -285,6 +332,7 @@ class VoiceEngine {
     for (const id of [...this.peers.keys()]) {
       if (!present.has(id)) this.closePeer(id);
     }
+    this.refreshVolumes();
     this.emit();
   }
 
@@ -317,6 +365,7 @@ class VoiceEngine {
     pc.onnegotiationneeded = async () => {
       try {
         peer.makingOffer = true;
+        preferCodecs(pc);
         await pc.setLocalDescription();
         send({ description: pc.localDescription });
       } catch (err) {
@@ -374,8 +423,9 @@ class VoiceEngine {
       const collision = description.type === 'offer' && (peer.makingOffer || pc.signalingState !== 'stable');
       peer.ignoreOffer = !peer.polite && collision;
       if (peer.ignoreOffer) return;
-      await pc.setRemoteDescription(description);
+      await pc.setRemoteDescription({ type: description.type, sdp: tuneRemoteSdp(description.sdp) });
       if (description.type === 'offer') {
+        preferCodecs(pc);
         await pc.setLocalDescription();
         getSocket()?.emit('rtc:signal', { to: peer.userId, data: { description: pc.localDescription } }, () => {});
       }
@@ -396,20 +446,39 @@ class VoiceEngine {
       if (!params.encodings?.length) return;
       params.encodings[0].maxBitrate = maxBitrate;
       if (maxFramerate) params.encodings[0].maxFramerate = maxFramerate;
+      params.encodings[0].priority = 'high';
+      params.encodings[0].networkPriority = 'high';
       if (sender.track.kind === 'video') params.degradationPreference = maxFramerate >= 60 ? 'maintain-framerate' : 'maintain-resolution';
       await sender.setParameters(params).catch(() => {});
     };
+    await tune(peer.senders.audio, MIC_BITRATE);
     for (const s of peer.senders.camera) if (s.track?.kind === 'video') await tune(s, CAMERA_BITRATE, 30);
     const q = this.screenQuality;
-    if (q) for (const s of peer.senders.screen) if (s.track?.kind === 'video') await tune(s, q.bitrate, q.fps);
+    for (const s of peer.senders.screen) {
+      if (s.track?.kind === 'video' && q) await tune(s, q.bitrate, q.fps);
+      if (s.track?.kind === 'audio') await tune(s, STREAM_AUDIO_BITRATE);
+    }
   }
 
   /* ---------------- remote audio ---------------- */
 
-  outputVolumeFor(userId) {
-    const { outputVolume, userVolumes } = getState().settings;
-    const uv = userVolumes[userId] ?? 100;
-    return Math.max(0, Math.min(1, (outputVolume / 100) * (uv / 100)));
+  /** Is this remote stream someone's screen share (as opposed to their mic)? */
+  isScreenStream(userId, streamId) {
+    const state = (getState().voice[this.roomId] || []).find((st) => st.userId === userId);
+    return Boolean(state?.screenStreamId && state.screenStreamId === streamId);
+  }
+
+  outputVolumeFor(userId, streamId) {
+    const { outputVolume, userVolumes, streamVolumes = {} } = getState().settings;
+    const own = this.isScreenStream(userId, streamId) ? (streamVolumes[userId] ?? 100) : (userVolumes[userId] ?? 100);
+    return Math.max(0, Math.min(1, (outputVolume / 100) * (own / 100)));
+  }
+
+  isMutedFor(userId, streamId) {
+    if (this.deafened) return true;
+    if (!this.isScreenStream(userId, streamId)) return false;
+    const { mutedStreams, hiddenStreams } = getState();
+    return Boolean(mutedStreams[userId] || hiddenStreams[userId]);
   }
 
   attachAudio(peer, stream) {
@@ -417,8 +486,8 @@ class VoiceEngine {
     const el = document.createElement('audio');
     el.autoplay = true;
     el.srcObject = stream;
-    el.muted = this.deafened;
-    el.volume = this.outputVolumeFor(peer.userId);
+    el.muted = this.isMutedFor(peer.userId, stream.id);
+    el.volume = this.outputVolumeFor(peer.userId, stream.id);
     const sink = getState().settings.outputDeviceId;
     if (sink && sink !== 'default' && el.setSinkId) el.setSinkId(sink).catch(() => {});
     el.style.display = 'none';
@@ -446,9 +515,9 @@ class VoiceEngine {
 
   refreshVolumes() {
     for (const peer of this.peers.values()) {
-      for (const el of peer.audioEls.values()) {
-        el.volume = this.outputVolumeFor(peer.userId);
-        el.muted = this.deafened;
+      for (const [streamId, el] of peer.audioEls) {
+        el.volume = this.outputVolumeFor(peer.userId, streamId);
+        el.muted = this.isMutedFor(peer.userId, streamId);
       }
     }
   }
@@ -497,7 +566,7 @@ class VoiceEngine {
   /** Open the preferred camera, falling back to any other camera that works. */
   async openCamera() {
     const { videoDeviceId } = getState().settings;
-    const base = { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } };
+    const base = { width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30 } };
     const devices = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'videoinput');
     const order = [videoDeviceId, ...devices.map((d) => d.deviceId)].filter((id, i, all) => id && all.indexOf(id) === i);
     let lastError;
@@ -547,10 +616,23 @@ class VoiceEngine {
     const q = SCREEN_QUALITY[quality] || SCREEN_QUALITY['1080p30'];
     const stream = await navigator.mediaDevices.getDisplayMedia({
       video: { width: { ideal: q.width }, height: { ideal: q.height }, frameRate: { ideal: q.fps, max: q.fps } },
-      audio,
+      // Stream audio is sent untouched: no voice processing, stereo, and without
+      // Bliscord's own output (other people's voices) so nobody hears an echo.
+      audio: audio && {
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: false,
+        channelCount: 2,
+        sampleRate: 48000,
+        restrictOwnAudio: true,
+        suppressLocalAudioPlayback: false,
+      },
+      systemAudio: 'include',
     });
     if (!this.roomId) { stream.getTracks().forEach((t) => t.stop()); return; }
     if (this.screenStream) this.stopScreen({ silent: true });
+    const at = stream.getAudioTracks()[0];
+    if (at) at.contentHint = 'music';
     const vt = stream.getVideoTracks()[0];
     vt.contentHint = q.fps >= 60 ? 'motion' : 'detail';
     try {

@@ -16,7 +16,7 @@ export async function toggleScreen() {
   if (voice.screenStream) { voice.stopScreen(); return; }
   if (native?.screen) { openModal('screenPicker'); return; }
   try {
-    await voice.startScreen({ quality: getState().settings.screenQuality, audio: true });
+    await voice.startScreen({ quality: getState().settings.screenQuality, audio: getState().settings.screenAudio });
   } catch (err) {
     if (err?.name !== 'NotAllowedError' && err?.name !== 'AbortError') toast('Could not share your screen', 'error');
   }

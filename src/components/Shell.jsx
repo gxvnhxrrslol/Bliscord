@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { useStore } from '../lib/store';
 import { openModal } from '../lib/actions';
 import { voice } from '../lib/voice';
+import { checkWhatsNew } from '../lib/whatsnew';
 import ServerDock from './ServerDock';
 import { HomeSidebar, ServerSidebar, UserPanel, VoicePanel } from './Sidebars';
 import { ChannelView, DmView } from './ChatView';
@@ -35,6 +36,7 @@ function useShortcuts() {
 
 export default function Shell() {
   useShortcuts();
+  useEffect(() => { const t = setTimeout(checkWhatsNew, 900); return () => clearTimeout(t); }, []);
   const view = useStore((s) => s.view);
   const channelType = useStore((s) => (s.view.kind === 'server' ? s.channels[s.view.channelId]?.type : null));
   const showMembers = useStore((s) => s.showMembers);

@@ -18,10 +18,13 @@ export const DEFAULT_SETTINGS = {
   inputSensitivity: 0.02,
   outputVolume: 100,
   userVolumes: {},
+  streamVolumes: {},
   soundsEnabled: true,
   desktopNotifications: true,
   closeToTray: true,
-  screenQuality: '1080p30',
+  screenQuality: '1080p60',
+  screenAudio: true,
+  videoCodec: 'vp9',
 };
 
 function loadSettings() {
@@ -50,6 +53,8 @@ export function initialState() {
     mentions: {},
     typing: {},
     replying: {},
+    hiddenStreams: {},
+    mutedStreams: {},
     editing: null,
     voice: {},
     view: { kind: 'home', serverId: null, channelId: null, home: 'friends' },

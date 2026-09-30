@@ -2,10 +2,11 @@ import { useEffect, useRef, useState } from 'react';
 import { DEFAULT_SETTINGS, updateSettings, useStore } from '../lib/store';
 import { closeModal, logout, openModal, toast, updateAccount, updateProfile } from '../lib/actions';
 import { assetUrl, native } from '../lib/api';
-import { voice, SCREEN_QUALITY } from '../lib/voice';
+import { voice, SCREEN_QUALITY, VIDEO_CODECS } from '../lib/voice';
 import { colorFor, fullDate } from '../lib/format';
 import { Avatar, Button, Field, Select, Slider, Switch, isTopLayer, pickFiles, uploadImage } from './ui';
 import { Badges, VerifiedMark } from './Badges';
+import { showChangelog } from '../lib/whatsnew';
 import Icon from './Icons';
 
 /* ---------------- Settings layer shell ---------------- */
@@ -497,6 +498,17 @@ function VoiceTab() {
         </div>
       </div>
       <div className="settings-block">
+        <h3>Video codec</h3>
+        <div className="seg small">
+          {Object.entries(VIDEO_CODECS).map(([k, c]) => (
+            <button key={k} className={(s.videoCodec || 'vp9') === k ? 'active' : ''} onClick={() => updateSettings({ videoCodec: k })}>{c.label}</button>
+          ))}
+        </div>
+      </div>
+      <div className="settings-block">
+        <div className="switch-row"><span>Share audio with your screen</span><Switch checked={s.screenAudio} onChange={(v) => updateSettings({ screenAudio: v })} /></div>
+      </div>
+      <div className="settings-block">
         <Button variant="ghost" onClick={() => {
           const keep = { theme: s.theme, accent: s.accent, glassScene: s.glassScene, density: s.density, fontScale: s.fontScale };
           updateSettings({ ...DEFAULT_SETTINGS, ...keep });
@@ -583,6 +595,7 @@ function AboutTab() {
       <div className="about-logo"><Icon.Logo size={52} /></div>
       <h1>Bliscord</h1>
       <span className="muted">{native?.version ? `Version ${native.version}` : 'Web'}</span>
+      <Button variant="soft" onClick={showChangelog}><Icon.Sparkle size={15} /> What&apos;s new</Button>
       <p className="about-credit">Made by Gxvn</p>
     </div>
   );

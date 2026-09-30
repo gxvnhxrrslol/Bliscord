@@ -7,3 +7,4 @@ server/data/
 .DS_Store
 Thumbs.db
 tools/
+build/release-notes.md
