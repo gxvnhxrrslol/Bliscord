@@ -69,6 +69,8 @@ export function initialState() {
     toasts: [],
     incomingCall: null,
     outgoingRing: null,
+    stageFocus: null,
+    stageVisible: null,
     favoriteGifs: [],
     gifsEnabled: false,
     update: null,

@@ -571,3 +571,24 @@
   border-radius: 4px; background: var(--accent); color: var(--on-accent, #fff);
   font-size: 10px; font-weight: 800; letter-spacing: 0.02em; line-height: 1; vertical-align: middle; flex-shrink: 0;
 }
+
+/* Pop-out stream preview */
+.stream-pip {
+  position: fixed; z-index: 60; width: 320px; aspect-ratio: 16 / 9; border-radius: 14px; overflow: hidden;
+  background: #000; box-shadow: 0 18px 44px -12px rgba(0, 0, 0, 0.7), 0 0 0 1px var(--border-strong);
+  cursor: pointer; touch-action: none; user-select: none; animation: pipIn 0.28s var(--spring);
+  transition: box-shadow 0.2s, transform 0.2s var(--spring);
+}
+.stream-pip:hover { box-shadow: 0 22px 50px -12px rgba(0, 0, 0, 0.75), 0 0 0 2px var(--accent); }
+.stream-pip.dragging { cursor: grabbing; transform: scale(1.03); transition: box-shadow 0.2s; }
+.stream-pip video { width: 100%; height: 100%; object-fit: contain; display: block; pointer-events: none; }
+.pip-bar {
+  position: absolute; inset: auto 0 0 0; display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 18px 8px 7px 10px; background: linear-gradient(transparent, rgba(0, 0, 0, 0.7)); color: #fff;
+  opacity: 0; transition: opacity 0.18s;
+}
+.stream-pip:hover .pip-bar, .stream-pip.dragging .pip-bar { opacity: 1; }
+.pip-name { display: inline-flex; align-items: center; gap: 6px; font-weight: 700; font-size: 13px; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.pip-close { width: 26px; height: 26px; border-radius: 8px; display: grid; place-items: center; background: rgba(255, 255, 255, 0.14); color: #fff; }
+.pip-close:hover { background: rgba(255, 255, 255, 0.28); }
+@keyframes pipIn { from { opacity: 0; transform: scale(0.85) translateY(12px); } }

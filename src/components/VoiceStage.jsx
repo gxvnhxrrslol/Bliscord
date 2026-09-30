@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { getState, setState, updateSettings, useStore, withKey, withoutKey } from '../lib/store';
-import { acceptCall, declineCall, joinVoice, leaveVoice, openMenu, openPopout } from '../lib/actions';
+import { acceptCall, declineCall, joinVoice, leaveVoice, openHome, openMenu, openPopout, selectChannel } from '../lib/actions';
 import { useVoice, voice } from '../lib/voice';
 import { toggleCamera, toggleScreen } from '../lib/media';
 import { assetUrl } from '../lib/api';
@@ -226,7 +226,16 @@ export function Stage({ roomId, compact = false, extraTiles = [] }) {
   const states = useStore((s) => s.voice[roomId]) || [];
   const meId = useStore((s) => s.me.id);
   const v = useVoice();
-  const [focus, setFocus] = useState(null);
+  // Focus is kept in the store so it survives leaving the call view (shown as a pop-out preview).
+  const focus = useStore((s) => (s.stageFocus?.roomId === roomId ? s.stageFocus.key : null));
+  const setFocus = (fn) => {
+    const next = typeof fn === 'function' ? fn(focus) : fn;
+    setState({ stageFocus: next ? { roomId, key: next } : null });
+  };
+  useEffect(() => {
+    setState({ stageVisible: roomId });
+    return () => setState((s) => (s.stageVisible === roomId ? { stageVisible: null } : null));
+  }, [roomId]);
   const grid = useRef(null);
   const [layout, setLayout] = useState({ cols: 1, size: 0 });
 
@@ -394,6 +403,94 @@ function CallAvatar({ userId }) {
     <div className="call-avatar">
       <Avatar user={user} size={72} />
       <span className="calling-ring" />
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Pop-out preview of the focused stream while browsing elsewhere      */
+/* ------------------------------------------------------------------ */
+
+const PIP_W = 320;
+const PIP_H = 180;
+
+function loadPipPos() {
+  try { return JSON.parse(localStorage.getItem('bliscord.pipPos')) || null; } catch { return null; }
+}
+
+export function StreamPip() {
+  const v = useVoice();
+  const focus = useStore((s) => s.stageFocus);
+  const visible = useStore((s) => s.stageVisible);
+  const st = useStore((s) => (focus ? (s.voice[focus.roomId] || []).find((x) => x.userId === focus.key.slice(2)) : null));
+  const user = useStore((s) => (focus ? s.users[focus.key.slice(2)] : null));
+  const meId = useStore((s) => s.me?.id);
+  const [pos, setPos] = useState(loadPipPos);
+  const drag = useRef(null);
+  const box = useRef(null);
+
+  let stream = null;
+  if (focus && st && v.roomId === focus.roomId) {
+    const self = st.userId === meId;
+    const remote = v.remote[st.userId] || {};
+    if (focus.key.startsWith('s-') && st.screen) stream = self ? v.screenStream : remote[st.screenStreamId];
+    if (focus.key.startsWith('u-') && st.video) stream = self ? v.cameraStream : remote[st.cameraStreamId];
+  }
+  const [ref] = useVideo(stream);
+  const show = Boolean(stream) && visible !== focus?.roomId;
+
+  // Keep the preview inside the window when it resizes.
+  const clamp = (p) => {
+    const w = box.current?.offsetWidth || PIP_W;
+    const h = box.current?.offsetHeight || PIP_H;
+    return { x: Math.min(Math.max(8, p.x), window.innerWidth - w - 8), y: Math.min(Math.max(40, p.y), window.innerHeight - h - 8) };
+  };
+  useEffect(() => {
+    const onResize = () => setPos((p) => (p ? clamp(p) : p));
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
+  if (!show) return null;
+
+  const onDown = (e) => {
+    if (e.button !== 0 || e.target.closest('button')) return;
+    const r = box.current.getBoundingClientRect();
+    drag.current = { dx: e.clientX - r.left, dy: e.clientY - r.top, moved: false, sx: e.clientX, sy: e.clientY };
+    const move = (ev) => {
+      const d = drag.current;
+      if (Math.abs(ev.clientX - d.sx) + Math.abs(ev.clientY - d.sy) > 4) d.moved = true;
+      if (d.moved) setPos(clamp({ x: ev.clientX - d.dx, y: ev.clientY - d.dy }));
+    };
+    const up = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      box.current?.classList.remove('dragging');
+      if (!drag.current.moved) openCall();
+      else setPos((p) => { try { localStorage.setItem('bliscord.pipPos', JSON.stringify(p)); } catch { /* ignore */ } return p; });
+    };
+    box.current.classList.add('dragging');
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  };
+
+  const openCall = () => {
+    const s = getState();
+    if (s.dms[focus.roomId]) openHome(focus.roomId);
+    else if (s.channels[focus.roomId]) selectChannel(s.channels[focus.roomId].serverId, focus.roomId);
+  };
+
+  const style = pos ? { left: pos.x, top: pos.y } : { right: 16, bottom: 16 };
+  return (
+    <div className="stream-pip" ref={box} style={style} onPointerDown={onDown}>
+      <video ref={ref} autoPlay playsInline muted />
+      <div className="pip-bar">
+        <span className="pip-name">
+          {focus.key.startsWith('s-') ? <Icon.Screen size={14} /> : <Icon.Video size={14} />}
+          {displayName(user)}
+        </span>
+        <button className="pip-close" onClick={() => setState({ stageFocus: null })} aria-label="Close preview"><Icon.X size={14} /></button>
+      </div>
     </div>
   );
 }

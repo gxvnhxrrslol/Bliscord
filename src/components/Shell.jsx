@@ -4,6 +4,7 @@ import { openModal } from '../lib/actions';
 import { voice } from '../lib/voice';
 import { checkWhatsNew } from '../lib/whatsnew';
 import ServerDock from './ServerDock';
+import { StreamPip } from './VoiceStage';
 import { HomeSidebar, ServerSidebar, UserPanel, VoicePanel } from './Sidebars';
 import { ChannelView, DmView } from './ChatView';
 import { VoiceChannelView } from './VoiceStage';
@@ -77,6 +78,7 @@ export default function Shell() {
         </div>
       </main>
       {aside}
+      <StreamPip />
       <ModalHost />
       <ProfilePopout />
       <ContextMenu />
