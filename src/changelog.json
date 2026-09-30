@@ -1,9 +1,14 @@
 [
   {
-    "version": "1.3.1",
+    "version": "1.4.0",
     "date": "2026-09-30",
-    "title": "Official account",
+    "title": "Discover and server tags",
     "items": [
+      "Discover: browse public servers by category and join them in one click",
+      "Ask for your server to be listed on Discover from the Discovery tab in server settings",
+      "Server tags: up to 5 characters with an icon or emoji, shown next to your name",
+      "Choose which server tag to wear from your profile settings",
+      "When you leave a call view, a focused stream keeps playing in a small window you can drag around",
       "Messages from the official Bliscord account show an OFFICIAL tag",
       "The official Bliscord chat is read only"
     ]

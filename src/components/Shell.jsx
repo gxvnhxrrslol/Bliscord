@@ -5,6 +5,7 @@ import { voice } from '../lib/voice';
 import { checkWhatsNew } from '../lib/whatsnew';
 import ServerDock from './ServerDock';
 import { StreamPip } from './VoiceStage';
+import { DiscoverSidebar, DiscoverView } from './Discover';
 import { HomeSidebar, ServerSidebar, UserPanel, VoicePanel } from './Sidebars';
 import { ChannelView, DmView } from './ChatView';
 import { VoiceChannelView } from './VoiceStage';
@@ -45,7 +46,9 @@ export default function Shell() {
 
   let content = null;
   let aside = null;
-  if (view.kind === 'home') {
+  if (view.kind === 'discover') {
+    content = <DiscoverView />;
+  } else if (view.kind === 'home') {
     if (view.home === 'friends') content = <FriendsView />;
     else {
       content = <DmView key={view.home} dmId={view.home} />;
@@ -68,12 +71,12 @@ export default function Shell() {
       )}
       <ServerDock />
       <aside className="sidebar panel glass">
-        {view.kind === 'home' ? <HomeSidebar /> : <ServerSidebar key={view.serverId} serverId={view.serverId} />}
+        {view.kind === 'discover' ? <DiscoverSidebar /> : view.kind === 'home' ? <HomeSidebar /> : <ServerSidebar key={view.serverId} serverId={view.serverId} />}
         <VoicePanel />
         <UserPanel />
       </aside>
       <main className="main panel glass">
-        <div className="view-anim" key={view.kind === 'home' ? `h-${view.home}` : `s-${view.channelId}`}>
+        <div className="view-anim" key={view.kind === 'discover' ? `d-${view.category}` : view.kind === 'home' ? `h-${view.home}` : `s-${view.channelId}`}>
           {content}
         </div>
       </main>

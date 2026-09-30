@@ -12,7 +12,7 @@ import { useVoice } from '../lib/voice';
 import { Avatar, Button, IconButton, ServerGlyph, copyText, imageSize, pickFiles, prepareImage } from './ui';
 import GifPicker, { GifStar } from './GifPicker';
 import { CallStage } from './VoiceStage';
-import { VerifiedMark } from './Badges';
+import { ServerTag, VerifiedMark } from './Badges';
 import { StyledName } from './Cosmetics';
 import { ChannelIcon, isPrivateChannel } from './channelUi';
 import { can, has, P, usePerms } from '../lib/perms';
@@ -270,6 +270,7 @@ const MessageItem = memo(function MessageItem({ message: m, grouped, author, mem
           <div className="msg-head">
             <span className="msg-author" onClick={popout}><StyledName user={author} color={nameColor || author?.accentColor}>{name}</StyledName></span>
             <VerifiedMark user={author} size={15} />
+            <ServerTag user={author} />
             {isOwnerAuthor && <Icon.Crown size={13} className="owner-crown" />}
             <span className="msg-time" data-tip={new Date(m.createdAt).toLocaleString()}>{messageTimestamp(m.createdAt)}</span>
           </div>

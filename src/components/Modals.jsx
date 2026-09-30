@@ -16,6 +16,7 @@ import ChannelSettingsModal from './ChannelSettings';
 import { can, P } from '../lib/perms';
 import Icon from './Icons';
 import { ChannelIcon } from './channelUi';
+import { DiscoverySubmitModalBody, openDiscover } from './Discover';
 
 /* ---------------- Image picker ---------------- */
 
@@ -108,11 +109,26 @@ function CreateServerModal({ mode: initialMode = 'choose' }) {
                   <Icon.ChevronRight size={18} />
                 </button>
                 <button className="choice" onClick={() => setMode('join')}>
-                  <span className="choice-icon"><Icon.Compass size={22} /></span>
+                  <span className="choice-icon"><Icon.Link size={22} /></span>
                   <span className="choice-text">Join with an invite</span>
                   <Icon.ChevronRight size={18} />
                 </button>
+                <button className="choice" onClick={() => { close(); openDiscover(); }}>
+                  <span className="choice-icon"><Icon.Compass size={22} /></span>
+                  <span className="choice-text">Browse Discover</span>
+                  <Icon.ChevronRight size={18} />
+                </button>
+                <button className="choice" onClick={() => setMode('list')}>
+                  <span className="choice-icon"><Icon.Upload size={22} /></span>
+                  <span className="choice-text">List your server on Discover</span>
+                  <Icon.ChevronRight size={18} />
+                </button>
               </div>
+            </div>
+          )}
+          {mode === 'list' && (
+            <div className="step left">
+              <DiscoverySubmitModalBody close={close} />
             </div>
           )}
           {mode === 'create' && (
@@ -622,7 +638,12 @@ function FollowChannelModal({ channelId }) {
   );
 }
 
+function DiscoverySubmitModal() {
+  return <Modal size="sm">{(close) => <DiscoverySubmitModalBody close={close} />}</Modal>;
+}
+
 export const MODALS = {
+  discoverySubmit: DiscoverySubmitModal,
   followChannel: FollowChannelModal,
   createServer: CreateServerModal,
   invite: InviteModal,

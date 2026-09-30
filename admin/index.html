@@ -82,6 +82,13 @@
   .page { padding: 28px; overflow-y: auto; width: 100%; }
   .page h1 { margin: 0 0 18px; font-size: 22px; }
   .page .card { max-width: 720px; }
+  .req { display: flex; gap: 14px; align-items: flex-start; }
+  .req .meta { flex: 1; min-width: 0; }
+  .req .meta p { margin: 6px 0 4px; color: var(--text-2); }
+  .req small { color: var(--text-3); }
+  .pill.pending { background: rgba(255,181,71,.16); color: var(--warn); }
+  .pill.approved { background: rgba(47,208,139,.16); color: var(--ok); }
+  .pill.rejected { background: rgba(255,93,108,.16); color: var(--danger); }
   .toast { position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%) translateY(20px); opacity: 0; padding: 10px 16px; border-radius: 10px;
     background: var(--panel-2); border: 1px solid var(--border-2); font-weight: 600; transition: all .25s; pointer-events: none; }
   .toast.show { opacity: 1; transform: translateX(-50%); }
@@ -103,6 +110,8 @@
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 10.5v3a1.5 1.5 0 0 0 1.5 1.5H7l7 4.5v-15L7 9H5.5A1.5 1.5 0 0 0 4 10.5z"/><path d="M17.5 9a4 4 0 0 1 0 6"/></svg>Message everyone</button>
   <button class="nav-btn" data-view="channels">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 4 7 20M17 4l-2 16M4.5 9h16M3.5 15h16"/></svg>Post in a channel</button>
+  <button class="nav-btn" data-view="discovery">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="8.5"/><path d="m15.5 8.5-2 5-5 2 2-5z"/></svg>Discover requests</button>
   <div class="stats" id="stats"></div>
 </nav>
 <main>
@@ -122,6 +131,12 @@
         <div class="field"><label>Message from Bliscord</label><textarea id="broadcast-text" rows="6"></textarea></div>
         <button class="btn primary" id="broadcast-send">Send to every user</button>
       </div>
+    </div>
+  </section>
+  <section class="view" id="view-discovery">
+    <div class="page">
+      <h1>Discover requests</h1>
+      <div id="discovery-list" style="display:grid;gap:12px;max-width:820px"></div>
     </div>
   </section>
   <section class="view" id="view-channels">
@@ -288,6 +303,34 @@ async function toggleBadge(k) {
   refresh();
 }
 
+const CATS = { gaming: 'Gaming', music: 'Music', entertainment: 'Entertainment', science: 'Science & Tech', education: 'Education', student: 'Student Hubs', community: 'Community' };
+async function loadDiscovery() {
+  let list = [];
+  try { list = await api('GET', '/discovery'); } catch { return; }
+  $('discovery-list').innerHTML = list.map((d) => `
+    <div class="card req">
+      ${avatar({ avatar: d.icon, displayName: d.name })}
+      <div class="meta">
+        <div style="display:flex;gap:8px;align-items:center"><b>${esc(d.name)}</b><span class="pill ${esc(d.status)}">${esc(d.status.toUpperCase())}</span></div>
+        <p>${esc(d.description)}</p>
+        <small>${esc(CATS[d.category] || d.category)} &middot; ${d.members} members &middot; requested by @${esc(d.submitter || 'unknown')} &middot; ${fmt(d.created_at)}${d.note ? ` &middot; ${esc(d.note)}` : ''}</small>
+        <div class="actions">
+          ${d.status !== 'approved' ? `<button class="btn primary" onclick="review('${esc(d.server_id)}','approved')">Approve</button>` : ''}
+          ${d.status !== 'rejected' ? `<button class="btn danger" onclick="rejectDialog('${esc(d.server_id)}')">${d.status === 'approved' ? 'Remove from Discover' : 'Reject'}</button>` : ''}
+        </div>
+      </div>
+    </div>`).join('') || '<div class="empty">No requests yet</div>';
+}
+async function review(serverId, status, note = '') {
+  await api('POST', '/discovery/review', { serverId, status, note });
+  toast(status === 'approved' ? 'Approved' : 'Rejected');
+  loadDiscovery();
+}
+function rejectDialog(serverId) {
+  dialog('Reject request', '<div class="field"><label>Reason</label><textarea id="m-reason" rows="3"></textarea></div>', 'Reject', true,
+    () => review(serverId, 'rejected', $('m-reason').value));
+}
+
 async function loadChannels() {
   try {
     const list = await api('GET', '/channels');
@@ -300,6 +343,7 @@ document.querySelectorAll('.nav-btn').forEach((b) => b.addEventListener('click',
   document.querySelectorAll('.nav-btn').forEach((x) => x.classList.toggle('active', x === b));
   document.querySelectorAll('.view').forEach((v) => v.classList.toggle('active', v.id === `view-${b.dataset.view}`));
   if (b.dataset.view === 'channels') loadChannels();
+  if (b.dataset.view === 'discovery') loadDiscovery();
 }));
 $('list').addEventListener('click', (e) => { const r = e.target.closest('.row'); if (r) openUser(r.dataset.id); });
 let searchTimer;

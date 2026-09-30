@@ -124,6 +124,7 @@ addColumn('channels', 'user_limit', 'INTEGER NOT NULL DEFAULT 0');
 addColumn('messages', 'mentions', "TEXT NOT NULL DEFAULT '{}'");
 addColumn('messages', 'crosspost', 'TEXT');
 addColumn('users', 'suspended_until', 'INTEGER');
+addColumn('servers', 'tag', 'TEXT');
 addColumn('users', 'suspend_reason', "TEXT NOT NULL DEFAULT ''");
 
 db.exec(`
@@ -171,6 +172,17 @@ CREATE TABLE IF NOT EXISTS favorite_gifs (
   data TEXT NOT NULL,
   created_at INTEGER NOT NULL,
   PRIMARY KEY (user_id, url)
+);
+
+CREATE TABLE IF NOT EXISTS discovery (
+  server_id TEXT PRIMARY KEY REFERENCES servers(id) ON DELETE CASCADE,
+  category TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'pending',
+  note TEXT NOT NULL DEFAULT '',
+  submitted_by TEXT,
+  created_at INTEGER NOT NULL,
+  reviewed_at INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS warnings (

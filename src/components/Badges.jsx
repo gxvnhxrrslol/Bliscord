@@ -26,6 +26,26 @@ export function Badges({ user, className = '' }) {
   );
 }
 
+export const TAG_ICONS = {
+  star: (p) => <Icon.Star filled {...p} />, fire: Icon.Fire, crown: Icon.Crown, shield: Icon.Shield, sparkle: Icon.Sparkle,
+  moon: Icon.Moon, code: Icon.Code, bolt: Icon.Bolt, heart: Icon.Heart, music: Icon.Music, gamepad: Icon.Gamepad,
+  leaf: Icon.Leaf, diamond: Icon.Diamond, skull: Icon.Skull,
+};
+
+/** A server tag chip: an icon or emoji plus up to five characters. */
+export function TagChip({ tag, size = 'md', tip }) {
+  if (!tag?.text) return null;
+  const I = TAG_ICONS[tag.icon];
+  return (
+    <span className={`server-tag ${size}`} style={{ '--tag': tag.color || '#4f7cff' }} data-tip={tip === undefined ? tag.serverName : tip || undefined} data-tip-fast>
+      {I ? <I size={size === 'lg' ? 14 : 11} strokeWidth={2.4} /> : <span className="server-tag-emoji">{tag.icon}</span>}
+      {tag.text}
+    </span>
+  );
+}
+
+export const ServerTag = ({ user, size }) => <TagChip tag={user?.serverTag} size={size} />;
+
 /** Small check seal shown next to verified users' names. */
 export function VerifiedMark({ user, size = 16 }) {
   if (user?.badges?.includes('official')) {

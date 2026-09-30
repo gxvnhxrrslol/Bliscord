@@ -67,6 +67,7 @@ function publicUser(row) {
     customStatus: row.custom_status,
     badges: parseJson(row.badges, []),
     profile: parseJson(row.profile, {}),
+    serverTag: userTag(row),
     createdAt: row.created_at,
     presence: presenceOf(row),
   };
@@ -83,7 +84,33 @@ function sanitizeProfile(p) {
   if (DECORATIONS.includes(p.decoration)) out.decoration = p.decoration;
   if (EFFECTS.includes(p.effect)) out.effect = p.effect;
   if (NAME_STYLES.includes(p.nameStyle)) out.nameStyle = p.nameStyle;
+  if (typeof p.tagServer === 'string' && p.tagServer.length <= 40) out.tagServer = p.tagServer;
   return out;
+}
+
+/* ---------------- Server tags ---------------- */
+
+const TAG_ICONS = ['star', 'fire', 'crown', 'shield', 'sparkle', 'moon', 'code', 'bolt', 'heart', 'music', 'gamepad', 'leaf', 'diamond', 'skull'];
+const TAG_TEXT_RE = /^[\p{L}\p{N}!?.&+#-]{1,5}$/u;
+
+function sanitizeTag(t) {
+  if (!t) return null;
+  const text = String(t.text || '').trim();
+  if (!TAG_TEXT_RE.test(text)) fail('Tags are 1 to 5 letters or numbers');
+  const icon = String(t.icon || '');
+  const emoji = /^\p{Extended_Pictographic}/u.test(icon) && [...icon].length <= 4;
+  if (!TAG_ICONS.includes(icon) && !emoji) fail('Pick an icon or an emoji');
+  const color = COLOR_RE.test(t.color) ? t.color : '#4f7cff';
+  return { text, icon, color };
+}
+
+/** The server tag a user chose to wear, if they are still in that server and it has a tag. */
+function userTag(row) {
+  const serverId = parseJson(row.profile, {}).tagServer;
+  if (!serverId) return null;
+  const srv = q('SELECT s.id, s.name, s.tag FROM servers s JOIN members m ON m.server_id = s.id WHERE s.id = ? AND m.user_id = ?').get(serverId, row.id);
+  const tag = srv?.tag ? parseJson(srv.tag, null) : null;
+  return tag ? { ...tag, serverId: srv.id, serverName: srv.name } : null;
 }
 
 /* ------------------------------------------------------------------ */
@@ -160,6 +187,7 @@ function serializeServer(s, { includeInvite = true } = {}) {
     systemChannelId: s.system_channel_id,
     rulesChannelId: s.rules_channel_id,
     joinMessages: Boolean(s.join_messages),
+    tag: s.tag ? parseJson(s.tag, null) : null,
     createdAt: s.created_at,
   };
 }
@@ -930,6 +958,13 @@ io.on('connection', (socket) => {
       'joinMessages' in p ? (p.joinMessages ? 1 : 0) : s.join_messages,
       s.id,
     );
+    if ('tag' in p) {
+      q('UPDATE servers SET tag = ? WHERE id = ?').run(p.tag ? JSON.stringify(sanitizeTag(p.tag)) : null, s.id);
+      // Everyone wearing this tag gets the new look.
+      for (const id of ctx.memberIds) {
+        if (parseJson(getUserRow(id)?.profile, {}).tagServer === s.id) broadcastUser(id);
+      }
+    }
     const fresh = serverCtx(s.id);
     emitServerUpdate(fresh);
     return serializeServer(fresh.row);
@@ -1411,6 +1446,56 @@ io.on('connection', (socket) => {
     };
   });
 
+  on('discovery:list', ({ category, query }) => {
+    const cat = DISCOVERY_CATEGORIES.includes(category) ? category : null;
+    const term = `%${str(query, 60)}%`;
+    const rows = q(`SELECT s.*, d.category, d.description AS pitch FROM discovery d JOIN servers s ON s.id = d.server_id
+      WHERE d.status = 'approved' AND (? IS NULL OR d.category = ?) AND (s.name LIKE ? OR d.description LIKE ?)`).all(cat, cat, term, term);
+    return rows.map((r) => {
+      const memberIds = q('SELECT user_id FROM members WHERE server_id = ?').all(r.id).map((m) => m.user_id);
+      return {
+        ...serializeServer(r),
+        description: r.pitch || r.description,
+        category: r.category,
+        memberCount: memberIds.length,
+        onlineCount: memberIds.filter((id) => online.has(id)).length,
+        joined: memberIds.includes(uid),
+        official: r.invite_code === OFFICIAL_INVITE,
+      };
+    }).sort((a, b) => Number(b.official) - Number(a.official) || b.memberCount - a.memberCount);
+  });
+
+  on('discovery:status', ({ serverId }) => {
+    const ctx = requireCtx(serverId, uid);
+    requirePerm(ctx, uid, P.MANAGE_SERVER);
+    const d = q('SELECT * FROM discovery WHERE server_id = ?').get(ctx.row.id);
+    return d ? { category: d.category, description: d.description, status: d.status, note: d.note, createdAt: d.created_at } : null;
+  });
+
+  on('discovery:submit', ({ serverId, category, description }) => {
+    const ctx = requireCtx(serverId, uid);
+    requirePerm(ctx, uid, P.MANAGE_SERVER);
+    if (!DISCOVERY_CATEGORIES.includes(category)) fail('Pick a category');
+    const text = str(description, 300);
+    if (text.length < 10) fail('Describe your server in a sentence or two');
+    const existing = q('SELECT status FROM discovery WHERE server_id = ?').get(ctx.row.id);
+    if (existing?.status === 'approved') {
+      q('UPDATE discovery SET category = ?, description = ? WHERE server_id = ?').run(category, text, ctx.row.id);
+    } else {
+      q(`INSERT INTO discovery (server_id, category, description, status, submitted_by, created_at) VALUES (?, ?, ?, 'pending', ?, ?)
+         ON CONFLICT (server_id) DO UPDATE SET category = excluded.category, description = excluded.description, status = 'pending',
+         note = '', submitted_by = excluded.submitted_by, created_at = excluded.created_at`).run(ctx.row.id, category, text, uid, now());
+    }
+    return { status: existing?.status === 'approved' ? 'approved' : 'pending' };
+  });
+
+  on('discovery:withdraw', ({ serverId }) => {
+    const ctx = requireCtx(serverId, uid);
+    requirePerm(ctx, uid, P.MANAGE_SERVER);
+    q('DELETE FROM discovery WHERE server_id = ?').run(ctx.row.id);
+    return true;
+  });
+
   on('gif:favorite', ({ gif, favorite }) => {
     const g = sanitizeGif(gif);
     if (favorite) {
@@ -1685,6 +1770,7 @@ io.on('connection', (socket) => {
 /* ------------------------------------------------------------------ */
 
 const SYSTEM_ID = 'bliscord-official';
+const DISCOVERY_CATEGORIES = ['gaming', 'music', 'entertainment', 'science', 'education', 'student', 'community'];
 const OFFICIAL_INVITE = '4mKGgJdE';
 const fmtDate = (t) => new Date(t).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' });
 
@@ -1869,6 +1955,25 @@ admin.post('/channel-message', route((req) => {
   emitToChannel(access, 'message:new', serializeMessage(q('SELECT * FROM messages WHERE id = ?').get(id)));
   if (ch.type === 'announcement') crosspost(access, SYSTEM_ID, id, content, []);
   return { id };
+}));
+
+admin.get('/discovery', route(() => q(`SELECT d.*, s.name, s.icon, s.invite_code,
+    (SELECT COUNT(*) FROM members m WHERE m.server_id = s.id) AS members, u.username AS submitter
+  FROM discovery d JOIN servers s ON s.id = d.server_id LEFT JOIN users u ON u.id = d.submitted_by
+  ORDER BY CASE d.status WHEN 'pending' THEN 0 WHEN 'approved' THEN 1 ELSE 2 END, d.created_at DESC`).all()));
+
+admin.post('/discovery/review', route((req) => {
+  const d = q('SELECT * FROM discovery WHERE server_id = ?').get(String(req.body.serverId || '')) || fail('Request not found');
+  const status = ['approved', 'rejected', 'pending'].includes(req.body.status) ? req.body.status : fail('Invalid status');
+  const note = str(req.body.note, 300);
+  q('UPDATE discovery SET status = ?, note = ?, reviewed_at = ? WHERE server_id = ?').run(status, note, now(), d.server_id);
+  const srv = q('SELECT name FROM servers WHERE id = ?').get(d.server_id);
+  if (d.submitted_by && getUserRow(d.submitted_by) && status !== 'pending') {
+    sendSystemDm(d.submitted_by, status === 'approved'
+      ? `**${srv.name} is now listed on Discover.**`
+      : `**${srv.name} was not approved for Discover.**${note ? `\n\nReason: ${note}` : ''}`);
+  }
+  return true;
 }));
 
 app.use('/api/admin', admin);

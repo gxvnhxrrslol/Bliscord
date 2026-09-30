@@ -4,6 +4,7 @@ import { openDm, openHome, openMenu, openModal, reorderServers, selectServer, le
 import { displayName } from '../lib/format';
 import { Avatar, ServerGlyph, copyText } from './ui';
 import Icon from './Icons';
+import { openDiscover } from './Discover';
 
 function serverUnread(s, serverId) {
   let unread = false;
@@ -163,7 +164,7 @@ export default function ServerDock() {
             </button>
           </div>
           <div className="dock-slot">
-            <button className="dock-item dock-action" onClick={() => openModal('createServer', { mode: 'join' })} data-tip="Join a server" data-tip-side="right">
+            <button className={`dock-item dock-action${view.kind === 'discover' ? ' active' : ''}`} onClick={() => openDiscover()} data-tip="Discover" data-tip-side="right">
               <Icon.Compass size={22} />
             </button>
           </div>

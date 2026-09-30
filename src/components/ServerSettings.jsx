@@ -13,6 +13,7 @@ import { SettingsLayer } from './SettingsModal';
 import { memberMenu, openRolePicker } from './MemberList';
 import { ChannelIcon, isPrivateChannel } from './channelUi';
 import Icon from './Icons';
+import { DiscoveryTab, ServerTagTab } from './Discover';
 
 const ROLE_COLORS = ['#4f7cff', '#2bb3ff', '#1fc7a8', '#3fcf6e', '#ffc24f', '#ff8a4f', '#ff5c7a', '#e05cff', '#8a6cff', '#99aab5'];
 
@@ -493,6 +494,8 @@ export default function ServerSettingsModal({ serverId, tab: initialTab }) {
     [P.KICK_MEMBERS, P.BAN_MEMBERS, P.MANAGE_ROLES, P.MANAGE_NICKNAMES].some((f) => has(perms, f)) && { id: 'members', label: 'Members', icon: Icon.Users },
     has(perms, P.BAN_MEMBERS) && { id: 'bans', label: 'Bans', icon: Icon.Block },
     has(perms, P.CREATE_INVITE) && { id: 'invites', label: 'Invites', icon: Icon.Link },
+    has(perms, P.MANAGE_SERVER) && { id: 'tag', label: 'Server Tag', icon: Icon.Tag },
+    has(perms, P.MANAGE_SERVER) && { id: 'discovery', label: 'Discovery', icon: Icon.Compass },
   ].filter(Boolean);
   const [tab, setTab] = useState(initialTab || tabs[0]?.id);
   if (!server) return null;
@@ -522,6 +525,8 @@ export default function ServerSettingsModal({ serverId, tab: initialTab }) {
       {tab === 'members' && <MembersTab server={server} />}
       {tab === 'bans' && <BansTab server={server} />}
       {tab === 'invites' && <InvitesTab server={server} />}
+      {tab === 'tag' && <ServerTagTab server={server} />}
+      {tab === 'discovery' && <DiscoveryTab server={server} />}
     </SettingsLayer>
   );
 }

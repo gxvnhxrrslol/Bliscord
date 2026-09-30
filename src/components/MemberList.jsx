@@ -8,7 +8,7 @@ import { assetUrl } from '../lib/api';
 import { colorFor, displayName, fullDate } from '../lib/format';
 import { has, myTopPosition, P, permsFor, roleColor } from '../lib/perms';
 import { Avatar, Button, ServerGlyph, copyText } from './ui';
-import { Badges, VerifiedMark } from './Badges';
+import { Badges, ServerTag, VerifiedMark } from './Badges';
 import { ProfileEffect, StyledName, profileThemeStyle } from './Cosmetics';
 import Icon from './Icons';
 
@@ -113,6 +113,7 @@ function MemberRow({ member, user, serverId, isOwner, color }) {
         <span className="member-name">
           <StyledName user={user} color={color}>{displayName(user, member)}</StyledName>
           <VerifiedMark user={user} size={14} />
+          <ServerTag user={user} size="sm" />
           {isOwner && <Icon.Crown size={13} className="owner-crown" />}
         </span>
         {user.customStatus && <span className="member-sub">{user.customStatus}</span>}
@@ -236,7 +237,7 @@ export function ProfileCard({ userId, serverId, compact = false, onAction }) {
       <Badges user={user} className="profile-badges" />
       <div className="profile-body">
         <div className="profile-names">
-          <h3><StyledName user={user} color={color}>{displayName(user, member)}</StyledName><VerifiedMark user={user} size={18} /></h3>
+          <h3><StyledName user={user} color={color}>{displayName(user, member)}</StyledName><VerifiedMark user={user} size={18} /><ServerTag user={user} size="lg" /></h3>
           <div className="profile-username">
             {!user.badges?.includes('official') && `@${user.username}`}
             {user.pronouns && <span className="profile-pronouns">{user.pronouns}</span>}
