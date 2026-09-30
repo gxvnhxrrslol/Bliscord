@@ -751,7 +751,7 @@ export function leaveVoice() {
   voice.leave();
   answeredCall = null;
   stopLoop('calling');
-  setState({ outgoingRing: null });
+  setState({ outgoingRing: null, stageFocus: null });
 }
 
 export async function startCall(dmId, { video = false } = {}) {
