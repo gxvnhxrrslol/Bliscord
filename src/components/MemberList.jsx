@@ -7,6 +7,7 @@ import {
 import { assetUrl } from '../lib/api';
 import { colorFor, displayName, fullDate } from '../lib/format';
 import { Avatar, Button, ServerGlyph, copyText } from './ui';
+import { Badges, VerifiedMark } from './Badges';
 import Icon from './Icons';
 
 export function memberMenu(e, { userId, serverId, meId, myRole, theirRole, server }) {
@@ -54,6 +55,7 @@ function MemberRow({ member, user, serverId, isOwner, meId, myRole, server }) {
       <div className="member-text">
         <span className="member-name" style={{ color: user.accentColor || undefined }}>
           {displayName(user, member)}
+          <VerifiedMark user={user} size={14} />
           {isOwner && <Icon.Crown size={13} className="owner-crown" />}
           {member.role === 'admin' && <Icon.Shield size={13} className="admin-shield" />}
         </span>
@@ -132,9 +134,10 @@ export function ProfileCard({ userId, serverId, compact = false, onAction }) {
       <div className="profile-avatar-wrap">
         <Avatar user={user} size={84} status={user.presence} className="profile-avatar" />
       </div>
+      <Badges user={user} className="profile-badges" />
       <div className="profile-body">
         <div className="profile-names">
-          <h3>{displayName(user, member)}</h3>
+          <h3>{displayName(user, member)}<VerifiedMark user={user} size={18} /></h3>
           <div className="profile-username">
             @{user.username}
             {user.pronouns && <span className="profile-pronouns">{user.pronouns}</span>}

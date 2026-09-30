@@ -11,6 +11,7 @@ import { renderMarkdown } from '../lib/markdown';
 import { useVoice } from '../lib/voice';
 import { Avatar, Button, IconButton, copyText, imageSize, pickFiles, prepareImage } from './ui';
 import { CallStage } from './VoiceStage';
+import { VerifiedMark } from './Badges';
 import Icon from './Icons';
 
 const GROUP_WINDOW = 7 * 60 * 1000;
@@ -211,6 +212,7 @@ const MessageItem = memo(function MessageItem({ message: m, grouped, author, mem
         {!grouped && (
           <div className="msg-head">
             <span className="msg-author" onClick={popout} style={{ color: author?.accentColor || undefined }}>{name}</span>
+            <VerifiedMark user={author} size={15} />
             {isOwnerAuthor && <Icon.Crown size={13} className="owner-crown" />}
             <span className="msg-time" data-tip={new Date(m.createdAt).toLocaleString()}>{messageTimestamp(m.createdAt)}</span>
           </div>

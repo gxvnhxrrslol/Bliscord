@@ -526,7 +526,19 @@
 .profile-card.compact .profile-avatar-wrap { top: 48px; }
 .profile-avatar .avatar-img { box-shadow: 0 0 0 6px var(--profile-ring); }
 .profile-body { padding: 52px 16px 16px; display: flex; flex-direction: column; gap: 12px; }
-.profile-names h3 { font-size: 1.3em; }
+.profile-names h3 { font-size: 1.3em; display: flex; align-items: center; }
+.profile-badges {
+  position: absolute;
+  top: 128px;
+  right: 12px;
+  padding: 4px;
+  border-radius: 11px;
+  background: var(--profile-section);
+  border: 1px solid var(--border);
+  max-width: 150px;
+  justify-content: flex-end;
+}
+.profile-card.compact .profile-badges { top: 112px; }
 .profile-username { color: var(--text-2); font-size: 0.9em; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 .profile-pronouns { color: var(--text-3); }
 .profile-pronouns::before { content: ''; display: inline-block; width: 3px; height: 3px; border-radius: 50%; background: currentColor; margin: 0 6px 3px 0; }

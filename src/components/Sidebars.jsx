@@ -9,6 +9,7 @@ import { toggleCamera, toggleScreen } from '../lib/media';
 import { displayName } from '../lib/format';
 import { assetUrl } from '../lib/api';
 import { Avatar, StatusDot, copyText } from './ui';
+import { VerifiedMark } from './Badges';
 import Icon from './Icons';
 
 /* ------------------------------------------------------------------ */
@@ -37,7 +38,7 @@ function DmRow({ dm, active, onHide }) {
     >
       <Avatar user={user} size={34} status={user.presence} />
       <div className="nav-row-text">
-        <span className="nav-row-name">{displayName(user)}</span>
+        <span className="nav-row-name">{displayName(user)}<VerifiedMark user={user} size={14} /></span>
         {user.customStatus && <span className="nav-row-sub">{user.customStatus}</span>}
       </div>
       {inCall && <Icon.Phone size={15} className="dm-call-icon" />}

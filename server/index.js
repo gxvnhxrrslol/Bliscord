@@ -51,6 +51,7 @@ function publicUser(row) {
     bio: row.bio,
     pronouns: row.pronouns,
     customStatus: row.custom_status,
+    badges: JSON.parse(row.badges || '[]'),
     createdAt: row.created_at,
     presence: presenceOf(row),
   };

@@ -73,10 +73,14 @@ kbd {
 .mono { font-family: var(--mono); }
 .clickable { cursor: pointer; }
 
+/* Reduced motion: play entrance animations instantly and stop looping ones (looping at near-zero duration flickers). */
 [data-motion='reduced'] *, [data-motion='reduced'] *::before, [data-motion='reduced'] *::after {
   animation-duration: 0.001ms !important;
+  animation-iteration-count: 1 !important;
   transition-duration: 0.001ms !important;
 }
+[data-motion='reduced'] .orb { animation: none !important; }
+[data-motion='reduced'] .spinner { animation-duration: 0.7s !important; animation-iteration-count: infinite !important; }
 
 /* ---------- Scrollbars ---------- */
 
@@ -547,3 +551,24 @@ kbd {
 
 .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--offline); margin: 0 5px 0 2px; }
 .dot.online { background: var(--online); }
+
+/* ---------- Badges ---------- */
+
+.badges { display: flex; flex-wrap: wrap; gap: 4px; }
+.badge-chip {
+  width: 24px;
+  height: 24px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35), 0 4px 10px -4px rgba(0, 0, 0, 0.5);
+  transition: transform 0.2s var(--spring);
+}
+.badge-chip:hover { transform: translateY(-2px) scale(1.08); }
+.b-founder { background: linear-gradient(135deg, #ffd66b, #ff9f1c); color: #4a2a00; }
+.b-developer { background: linear-gradient(135deg, #4f7cff, #8a5cff); }
+.b-verified { background: linear-gradient(135deg, #2bc0ff, #3b6cff); }
+.b-staff { background: linear-gradient(135deg, #1fc7a8, #2b8cff); }
+.b-early { background: linear-gradient(135deg, #ff6b8a, #b56bff); }
+.verified-mark { display: inline-flex; vertical-align: middle; margin-left: 4px; color: #2b9dff; flex-shrink: 0; }

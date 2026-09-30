@@ -5,6 +5,7 @@ import { assetUrl, native } from '../lib/api';
 import { voice, SCREEN_QUALITY } from '../lib/voice';
 import { colorFor, fullDate } from '../lib/format';
 import { Avatar, Button, Field, Select, Slider, Switch, isTopLayer, pickFiles, uploadImage } from './ui';
+import { Badges, VerifiedMark } from './Badges';
 import Icon from './Icons';
 
 /* ---------------- Settings layer shell ---------------- */
@@ -88,9 +89,10 @@ function AccountTab({ onEditProfile }) {
         </div>
         <div className="account-head">
           <Avatar user={me} size={80} status={me.presence} />
-          <div>
-            <h2>{me.displayName}</h2>
+          <div className="account-head-text">
+            <h2>{me.displayName}<VerifiedMark user={me} size={18} /></h2>
             <span className="muted">@{me.username}</span>
+            <Badges user={me} />
           </div>
           <Button variant="soft" onClick={onEditProfile}>Edit profile</Button>
         </div>
@@ -242,9 +244,10 @@ function ProfileTab() {
                 <span className="avatar-edit-overlay"><Icon.Camera size={22} /></span>
               </button>
             </div>
+            <Badges user={me} className="profile-badges" />
             <div className="profile-body">
               <div className="profile-names">
-                <h3 style={{ color: preview.accentColor || undefined }}>{preview.displayName || me.username}</h3>
+                <h3 style={{ color: preview.accentColor || undefined }}>{preview.displayName || me.username}<VerifiedMark user={me} size={18} /></h3>
                 <div className="profile-username">@{me.username}{preview.pronouns && <span className="profile-pronouns">{preview.pronouns}</span>}</div>
               </div>
               {preview.customStatus && <div className="profile-status">{preview.customStatus}</div>}

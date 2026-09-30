@@ -11,6 +11,18 @@ function gearPath(teeth = 8, outer = 9.6, inner = 7.3, cx = 12, cy = 12) {
 }
 const GEAR = gearPath();
 
+// Scalloped seal used for the verified mark.
+function sealPath(bumps = 12, outer = 10.6, inner = 9.1) {
+  const pts = [];
+  for (let i = 0; i < bumps * 2; i++) {
+    const a = (i / (bumps * 2)) * Math.PI * 2 - Math.PI / 2;
+    const r = i % 2 === 0 ? outer : inner;
+    pts.push(`${(12 + r * Math.cos(a)).toFixed(2)} ${(12 + r * Math.sin(a)).toFixed(2)}`);
+  }
+  return `M${pts.join('L')}Z`;
+}
+const SEAL = sealPath();
+
 const Svg = ({ size = 20, children, className = '', fill = 'none', strokeWidth = 1.8, ...rest }) => (
   <svg
     width={size}
@@ -328,6 +340,13 @@ export const Icon = {
       <rect x="4" y="4" width="7" height="7" rx="1.5" /><rect x="13" y="4" width="7" height="7" rx="1.5" />
       <rect x="4" y="13" width="7" height="7" rx="1.5" /><rect x="13" y="13" width="7" height="7" rx="1.5" />
     </Svg>
+  ),
+  Code: (p) => <Svg {...p}><path d="M8 7.5L3.5 12 8 16.5M16 7.5l4.5 4.5-4.5 4.5M13.6 5.5l-3.2 13" /></Svg>,
+  Seal: ({ size = 16, className = '' }) => (
+    <svg width={size} height={size} viewBox="0 0 24 24" className={`icon ${className}`} aria-hidden="true">
+      <path d={SEAL} fill="currentColor" stroke="currentColor" strokeWidth="2.2" strokeLinejoin="round" />
+      <path d="M7.8 12.3l2.8 2.8 5.6-5.8" fill="none" stroke="#fff" strokeWidth="2.3" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
   ),
   Sparkle: (p) => <Svg {...p}><path d="M12 3.5l2 6.5 6.5 2-6.5 2-2 6.5-2-6.5-6.5-2 6.5-2z" /></Svg>,
   Folder: (p) => <Svg {...p}><path d="M3.5 7.5A2.5 2.5 0 0 1 6 5h3.5l2 2.5H18a2.5 2.5 0 0 1 2.5 2.5v7.5A2.5 2.5 0 0 1 18 20H6a2.5 2.5 0 0 1-2.5-2.5z" /></Svg>,

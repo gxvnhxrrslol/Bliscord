@@ -6,6 +6,7 @@ import {
 import { displayName } from '../lib/format';
 import { Avatar, Button, Empty } from './ui';
 import { ChatHeader } from './ChatView';
+import { VerifiedMark } from './Badges';
 import Icon from './Icons';
 
 const TABS = [
@@ -39,7 +40,7 @@ function FriendRow({ user, type }) {
     >
       <Avatar user={user} size={36} status={type === 'blocked' ? undefined : user.presence} />
       <div className="friend-text" onClick={(e) => { e.stopPropagation(); openPopout(user.id, e.currentTarget.getBoundingClientRect()); }}>
-        <span className="friend-name">{displayName(user)} <span className="friend-username">@{user.username}</span></span>
+        <span className="friend-name">{displayName(user)}<VerifiedMark user={user} size={14} /> <span className="friend-username">@{user.username}</span></span>
         <span className="friend-sub">{sub}</span>
       </div>
       <div className="friend-actions" onClick={(e) => e.stopPropagation()}>

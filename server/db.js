@@ -106,6 +106,10 @@ CREATE TABLE IF NOT EXISTS read_states (
 );
 `);
 
+// Migrations for databases created by older versions.
+const userColumns = db.prepare('PRAGMA table_info(users)').all().map((c) => c.name);
+if (!userColumns.includes('badges')) db.exec("ALTER TABLE users ADD COLUMN badges TEXT NOT NULL DEFAULT '[]'");
+
 let seq = 0;
 let lastMs = 0;
 /** Sortable unique id: fixed-width base36 timestamp + sequence + random. */
