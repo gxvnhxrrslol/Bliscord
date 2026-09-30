@@ -1,1 +1,4 @@
-{ "serverUrl": "" }
+{
+  "serverUrl": "",
+  "discoveryUrl": "https://api.github.com/repos/gxvnhxrrslol/Bliscord/contents/server.json?ref=server-url"
+}

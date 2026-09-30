@@ -1,4 +1,4 @@
-import { authApi, call, connectSocket, disconnectSocket, getSocket, getToken, native, setToken } from './api';
+import { authApi, call, connectSocket, disconnectSocket, discoverServer, getSocket, getToken, native, setToken } from './api';
 import { getState, resetState, setState, withKey, withoutKey } from './store';
 import { voice } from './voice';
 import { playSound, startLoop, stopLoop } from './sounds';
@@ -52,11 +52,12 @@ async function attempt(fn, { success } = {}) {
 /* Session                                                             */
 /* ------------------------------------------------------------------ */
 
-export function boot() {
+export async function boot() {
+  setupActivityTracking();
+  await discoverServer();
   const token = getToken();
   if (!token) setState({ status: 'auth' });
   else startSession(token);
-  setupActivityTracking();
 }
 
 export async function login(loginName, password) {
@@ -103,6 +104,10 @@ export function startSession(token) {
     }
     failures += 1;
     setState({ connection: failures > 2 ? 'offline' : 'reconnecting' });
+    // The server may have moved to a new tunnel address.
+    if (failures % 3 === 0) {
+      discoverServer().then((moved) => { if (moved && getToken() === token) startSession(token); });
+    }
   });
 
   socket.on('ready', onReady);

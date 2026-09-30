@@ -12,10 +12,39 @@ function safeSet(key, value) {
   try { value === null ? localStorage.removeItem(key) : localStorage.setItem(key, value); } catch { /* storage unavailable */ }
 }
 
+const DISCOVERED_KEY = 'bliscord.discoveredUrl';
+
 export function defaultServerUrl() {
   if (native?.config?.serverUrl) return native.config.serverUrl;
   if (location.protocol.startsWith('http') && !import.meta.env.DEV) return location.origin;
+  if (native?.config?.discoveryUrl && safeGet(DISCOVERED_KEY)) return safeGet(DISCOVERED_KEY);
   return 'http://localhost:3000';
+}
+
+/**
+ * When the server runs behind a tunnel whose address changes, its current
+ * address is published as JSON ({ "url": ... }) at config.discoveryUrl.
+ * Returns true when the address changed.
+ */
+export async function discoverServer() {
+  const source = native?.config?.discoveryUrl;
+  if (!source || native?.config?.serverUrl || safeGet(SERVER_KEY)) return false;
+  try {
+    const res = await fetch(source, {
+      cache: 'no-store',
+      headers: { Accept: 'application/vnd.github.raw+json' },
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) return false;
+    const { url } = await res.json();
+    if (typeof url !== 'string' || !/^https?:\/\//.test(url)) return false;
+    const clean = url.replace(/\/+$/, '');
+    if (clean === safeGet(DISCOVERED_KEY)) return false;
+    safeSet(DISCOVERED_KEY, clean);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function getServerUrl() {
@@ -36,7 +65,7 @@ export function assetUrl(path) {
   return getServerUrl() + path;
 }
 
-async function post(path, body, token) {
+async function post(path, body, token, retried = false) {
   let res;
   try {
     res = await fetch(getServerUrl() + path, {
@@ -45,8 +74,10 @@ async function post(path, body, token) {
       body: JSON.stringify(body || {}),
     });
   } catch {
+    if (!retried && (await discoverServer())) return post(path, body, token, true);
     throw new Error('Could not reach the server');
   }
+  if (res.status >= 520 && !retried && (await discoverServer())) return post(path, body, token, true);
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || 'Request failed');
   return data;
