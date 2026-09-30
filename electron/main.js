@@ -205,7 +205,7 @@ function checkForUpdates() {
     sendUpdate({ status: 'none' });
     return;
   }
-  autoUpdater.checkForUpdates().catch((err) => sendUpdate({ status: 'error', message: String(err?.message || err) }));
+  autoUpdater.checkForUpdates().catch(() => { /* reported through the 'error' event */ });
 }
 
 function setupUpdater() {
@@ -216,7 +216,12 @@ function setupUpdater() {
   autoUpdater.on('update-not-available', () => sendUpdate({ status: 'none' }));
   autoUpdater.on('download-progress', (p) => sendUpdate({ status: 'downloading', percent: p.percent }));
   autoUpdater.on('update-downloaded', (info) => sendUpdate({ status: 'ready', version: info.version }));
-  autoUpdater.on('error', (err) => sendUpdate({ status: 'error', message: String(err?.message || err) }));
+  autoUpdater.on('error', (err) => {
+    const message = String(err?.message || err);
+    // A repo with no published release yet answers 404; that just means there is nothing newer.
+    const nothingPublished = /404|No published versions|Unable to find latest version|Cannot find latest/i.test(message);
+    sendUpdate(nothingPublished ? { status: 'none' } : { status: 'error', message });
+  });
   setTimeout(checkForUpdates, 5000);
   setInterval(checkForUpdates, 30 * 60 * 1000);
 }

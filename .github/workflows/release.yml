@@ -32,8 +32,10 @@ jobs:
 
       - name: Point the app at the production server
         if: ${{ vars.BLISCORD_SERVER_URL != '' }}
-        shell: bash
-        run: echo "{ \"serverUrl\": \"${{ vars.BLISCORD_SERVER_URL }}\" }" > app.config.json
+        env:
+          SERVER_URL: ${{ vars.BLISCORD_SERVER_URL }}
+        run: |
+          node -e "const fs = require('fs'); const c = JSON.parse(fs.readFileSync('app.config.json', 'utf8')); c.serverUrl = process.env.SERVER_URL; fs.writeFileSync('app.config.json', JSON.stringify(c, null, 2));"
 
       - run: npx vite build
 
