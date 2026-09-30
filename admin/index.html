@@ -1,0 +1,330 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Bliscord Admin</title>
+<style>
+  :root {
+    --bg: #0b0e15; --panel: #121722; --panel-2: #181e2c; --input: #0d111a; --border: #232b3d; --border-2: #2e3850;
+    --text: #e8ecf5; --text-2: #aab3c7; --text-3: #6f7a92; --accent: #4f7cff; --accent-2: #6d93ff;
+    --danger: #ff5d6c; --warn: #ffb547; --ok: #2fd08b; --radius: 12px;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; height: 100vh; display: grid; grid-template-columns: 230px 1fr; background: var(--bg); color: var(--text);
+    font: 14px/1.45 'Segoe UI', system-ui, sans-serif; overflow: hidden; }
+  button { font: inherit; color: inherit; cursor: pointer; border: 0; background: none; }
+  input, textarea, select { font: inherit; color: var(--text); background: var(--input); border: 1px solid var(--border);
+    border-radius: 10px; padding: 9px 11px; outline: none; width: 100%; transition: border-color .15s; }
+  input:focus, textarea:focus, select:focus { border-color: var(--accent); }
+  textarea { resize: vertical; min-height: 90px; }
+  nav { background: var(--panel); border-right: 1px solid var(--border); display: flex; flex-direction: column; padding: 18px 12px; gap: 4px; }
+  .brand { display: flex; align-items: center; gap: 10px; padding: 4px 8px 18px; font-weight: 800; font-size: 16px; }
+  .brand img { width: 30px; height: 30px; border-radius: 9px; }
+  .tag { display: inline-flex; align-items: center; gap: 2px; background: var(--accent); color: #fff; font-size: 10px; font-weight: 800;
+    padding: 1px 5px; border-radius: 4px; letter-spacing: .02em; }
+  .nav-btn { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 9px; color: var(--text-2); font-weight: 600; text-align: left; }
+  .nav-btn:hover { background: var(--panel-2); color: var(--text); }
+  .nav-btn.active { background: rgba(79,124,255,.16); color: var(--text); }
+  .nav-btn svg { width: 18px; height: 18px; }
+  .stats { margin-top: auto; display: grid; gap: 6px; padding: 12px; border-radius: var(--radius); background: var(--panel-2); font-size: 12.5px; color: var(--text-2); }
+  .stats b { color: var(--text); float: right; }
+  main { overflow: hidden; display: flex; flex-direction: column; }
+  .view { display: none; flex: 1; min-height: 0; }
+  .view.active { display: flex; }
+  .users { display: grid; grid-template-columns: 340px 1fr; width: 100%; min-height: 0; }
+  .list-col { border-right: 1px solid var(--border); display: flex; flex-direction: column; min-height: 0; }
+  .list-col .search { padding: 16px; border-bottom: 1px solid var(--border); }
+  .list { overflow-y: auto; padding: 8px; flex: 1; }
+  .row { display: flex; align-items: center; gap: 11px; padding: 8px 10px; border-radius: 10px; width: 100%; text-align: left; }
+  .row:hover { background: var(--panel-2); }
+  .row.active { background: rgba(79,124,255,.16); }
+  .row .meta { min-width: 0; flex: 1; }
+  .row .name { font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .row .sub { font-size: 12px; color: var(--text-3); }
+  .pill { font-size: 10.5px; font-weight: 800; padding: 2px 6px; border-radius: 5px; letter-spacing: .02em; }
+  .pill.susp { background: rgba(255,93,108,.16); color: var(--danger); }
+  .pill.warn { background: rgba(255,181,71,.16); color: var(--warn); }
+  .avatar { width: 38px; height: 38px; border-radius: 50%; background: var(--panel-2) center/cover; flex-shrink: 0; display: grid; place-items: center;
+    font-weight: 800; font-size: 13px; color: #fff; position: relative; }
+  .avatar.big { width: 76px; height: 76px; font-size: 24px; border: 4px solid var(--bg); }
+  .dot { position: absolute; right: -1px; bottom: -1px; width: 12px; height: 12px; border-radius: 50%; background: var(--ok); border: 2.5px solid var(--bg); }
+  .detail { overflow-y: auto; padding: 0 0 40px; }
+  .empty { margin: auto; color: var(--text-3); text-align: center; padding: 40px; }
+  .banner { height: 110px; background: linear-gradient(135deg, #2b4fd8, #6a5cff); }
+  .head { display: flex; align-items: flex-end; gap: 16px; padding: 0 28px; margin-top: -38px; }
+  .head h2 { margin: 0 0 4px; font-size: 22px; display: flex; align-items: center; gap: 8px; }
+  .head .sub { color: var(--text-3); margin-bottom: 6px; }
+  .content { padding: 20px 28px; display: grid; gap: 16px; max-width: 900px; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px 18px; }
+  .card h3 { margin: 0 0 12px; font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--text-3); }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .facts { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+  .fact small { display: block; color: var(--text-3); font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
+  .fact span { font-weight: 600; word-break: break-all; }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+  .btn { padding: 8px 14px; border-radius: 9px; font-weight: 650; background: var(--panel-2); border: 1px solid var(--border-2); transition: filter .15s, transform .15s; }
+  .btn:hover { filter: brightness(1.15); }
+  .btn:active { transform: translateY(1px); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn.danger { background: rgba(255,93,108,.14); border-color: rgba(255,93,108,.4); color: var(--danger); }
+  .btn.warn { background: rgba(255,181,71,.12); border-color: rgba(255,181,71,.35); color: var(--warn); }
+  .btn:disabled { opacity: .5; cursor: default; }
+  .field { display: grid; gap: 6px; margin-bottom: 10px; }
+  .field label { font-size: 11.5px; font-weight: 700; color: var(--text-3); text-transform: uppercase; letter-spacing: .04em; }
+  .status-banner { padding: 12px 14px; border-radius: 10px; background: rgba(255,93,108,.12); border: 1px solid rgba(255,93,108,.35); color: #ffc2c8; }
+  .warn-item { display: flex; gap: 10px; align-items: flex-start; padding: 10px 0; border-top: 1px solid var(--border); }
+  .warn-item:first-of-type { border-top: 0; padding-top: 0; }
+  .warn-item .meta { flex: 1; }
+  .warn-item small { color: var(--text-3); }
+  .badges { display: flex; gap: 8px; flex-wrap: wrap; }
+  .badge-toggle { padding: 7px 12px; border-radius: 9px; border: 1px solid var(--border-2); color: var(--text-2); font-weight: 600; }
+  .badge-toggle.on { border-color: var(--accent); background: rgba(79,124,255,.16); color: var(--text); }
+  .page { padding: 28px; overflow-y: auto; width: 100%; }
+  .page h1 { margin: 0 0 18px; font-size: 22px; }
+  .page .card { max-width: 720px; }
+  .toast { position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%) translateY(20px); opacity: 0; padding: 10px 16px; border-radius: 10px;
+    background: var(--panel-2); border: 1px solid var(--border-2); font-weight: 600; transition: all .25s; pointer-events: none; }
+  .toast.show { opacity: 1; transform: translateX(-50%); }
+  .toast.error { border-color: rgba(255,93,108,.5); color: #ffc2c8; }
+  .modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: none; place-items: center; z-index: 10; }
+  .modal-bg.show { display: grid; }
+  .modal { width: 440px; background: var(--panel); border: 1px solid var(--border-2); border-radius: 16px; padding: 22px; animation: pop .18s ease-out; }
+  .modal h2 { margin: 0 0 14px; font-size: 18px; }
+  @keyframes pop { from { transform: scale(.96); opacity: 0; } }
+  ::-webkit-scrollbar { width: 10px; } ::-webkit-scrollbar-thumb { background: #262e42; border-radius: 10px; border: 3px solid transparent; background-clip: padding-box; }
+</style>
+</head>
+<body>
+<nav>
+  <div class="brand"><img src="../build/icon.png" alt="" />Bliscord <span class="tag">ADMIN</span></div>
+  <button class="nav-btn active" data-view="users">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.5 3.4-5.5 6.5-5.5s5.7 2 6.5 5.5M16 4.8a3.5 3.5 0 0 1 0 6.4M18 14.8c1.9.7 3.1 2.4 3.5 5.2"/></svg>Users</button>
+  <button class="nav-btn" data-view="broadcast">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 10.5v3a1.5 1.5 0 0 0 1.5 1.5H7l7 4.5v-15L7 9H5.5A1.5 1.5 0 0 0 4 10.5z"/><path d="M17.5 9a4 4 0 0 1 0 6"/></svg>Message everyone</button>
+  <button class="nav-btn" data-view="channels">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 4 7 20M17 4l-2 16M4.5 9h16M3.5 15h16"/></svg>Post in a channel</button>
+  <div class="stats" id="stats"></div>
+</nav>
+<main>
+  <section class="view active" id="view-users">
+    <div class="users">
+      <div class="list-col">
+        <div class="search"><input id="search" placeholder="Search by name, username, email or ID" /></div>
+        <div class="list" id="list"></div>
+      </div>
+      <div class="detail" id="detail"><div class="empty">Select a user</div></div>
+    </div>
+  </section>
+  <section class="view" id="view-broadcast">
+    <div class="page">
+      <h1>Message everyone</h1>
+      <div class="card">
+        <div class="field"><label>Message from Bliscord</label><textarea id="broadcast-text" rows="6"></textarea></div>
+        <button class="btn primary" id="broadcast-send">Send to every user</button>
+      </div>
+    </div>
+  </section>
+  <section class="view" id="view-channels">
+    <div class="page">
+      <h1>Post in a channel</h1>
+      <div class="card">
+        <div class="field"><label>Channel</label><select id="channel-select"></select></div>
+        <div class="field"><label>Message</label><textarea id="channel-text" rows="6"></textarea></div>
+        <button class="btn primary" id="channel-send">Post as Bliscord</button>
+      </div>
+    </div>
+  </section>
+</main>
+<div class="modal-bg" id="modal"><div class="modal" id="modal-body"></div></div>
+<div class="toast" id="toast"></div>
+
+<script>
+const SERVER = 'http://localhost:3000';
+const BADGES = [['founder', 'Founder'], ['developer', 'Developer'], ['verified', 'Verified'], ['staff', 'Staff'], ['early', 'Early Supporter']];
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const fmt = (t) => new Date(t).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' });
+let selected = null;
+let users = [];
+
+function toast(text, error = false) {
+  const t = $('toast');
+  t.textContent = text;
+  t.className = `toast show${error ? ' error' : ''}`;
+  clearTimeout(t.timer);
+  t.timer = setTimeout(() => { t.className = 'toast'; }, 2600);
+}
+
+async function api(method, route, body) {
+  const res = method === 'GET' ? await window.admin.get(route) : await window.admin.post(route, body);
+  if (res.error) { toast(res.error, true); throw new Error(res.error); }
+  return res.data;
+}
+
+function avatar(u, big = false) {
+  const src = u.avatar ? `${SERVER}${u.avatar}` : '';
+  const initials = (u.displayName || u.username || '?').slice(0, 2).toUpperCase();
+  return `<div class="avatar${big ? ' big' : ''}" style="${src ? `background-image:url('${esc(src)}')` : `background:${esc(u.bannerColor || '#4f7cff')}`}">${src ? '' : esc(initials)}${u.presence && u.presence !== 'offline' ? '<span class="dot"></span>' : ''}</div>`;
+}
+
+const isBanned = (u) => u.suspendedUntil && u.suspendedUntil >= 8e15;
+
+async function loadStats() {
+  try {
+    const s = await api('GET', '/stats');
+    $('stats').innerHTML = `<div>Users <b>${s.users}</b></div><div>Online <b>${s.online}</b></div><div>Servers <b>${s.servers}</b></div><div>Messages <b>${s.messages}</b></div><div>Suspended <b>${s.suspended}</b></div>`;
+  } catch { $('stats').innerHTML = '<div>Server offline</div>'; }
+}
+
+async function loadUsers() {
+  try { users = await api('GET', `/users?q=${encodeURIComponent($('search').value.trim())}`); } catch { users = []; }
+  $('list').innerHTML = users.map((u) => `
+    <button class="row${selected === u.id ? ' active' : ''}" data-id="${esc(u.id)}">
+      ${avatar(u)}
+      <div class="meta"><div class="name">${esc(u.displayName)}</div><div class="sub">@${esc(u.username)}</div></div>
+      ${u.suspendedUntil ? `<span class="pill susp">${isBanned(u) ? 'BANNED' : 'SUSPENDED'}</span>` : u.warnings ? `<span class="pill warn">${u.warnings} WARN</span>` : ''}
+    </button>`).join('') || '<div class="empty">No users found</div>';
+}
+
+async function openUser(id) {
+  selected = id;
+  document.querySelectorAll('.row').forEach((r) => r.classList.toggle('active', r.dataset.id === id));
+  let data;
+  try { data = await api('GET', `/users/${encodeURIComponent(id)}`); } catch { return; }
+  const u = data.user;
+  $('detail').innerHTML = `
+    <div class="banner" style="${u.banner ? `background:url('${esc(SERVER + u.banner)}') center/cover` : u.bannerColor ? `background:${esc(u.bannerColor)}` : ''}"></div>
+    <div class="head">${avatar(u, true)}<div><h2>${esc(u.displayName)}</h2><div class="sub">@${esc(u.username)}</div></div></div>
+    <div class="content">
+      ${u.suspendedUntil ? `<div class="status-banner">${isBanned(u) ? 'Banned' : `Suspended until ${fmt(u.suspendedUntil)}`}${u.suspendReason ? ` &middot; ${esc(u.suspendReason)}` : ''}</div>` : ''}
+      <div class="card"><div class="facts">
+        <div class="fact"><small>Email</small><span>${esc(u.email)}</span></div>
+        <div class="fact"><small>Joined</small><span>${fmt(u.createdAt)}</span></div>
+        <div class="fact"><small>Status</small><span>${esc(u.presence)}</span></div>
+        <div class="fact"><small>Servers</small><span>${data.servers.length}</span></div>
+      </div>
+      <div class="actions" style="margin-top:14px">
+        <button class="btn" onclick="navigator.clipboard.writeText('${esc(u.id)}');toast('User ID copied')">Copy ID</button>
+        <button class="btn" onclick="forceLogout()">Log out everywhere</button>
+      </div></div>
+      <div class="card">
+        <h3>Message from Bliscord</h3>
+        <textarea id="dm-text" rows="4"></textarea>
+        <div class="actions"><button class="btn primary" onclick="sendDm()">Send message</button></div>
+      </div>
+      <div class="grid2">
+        <div class="card">
+          <h3>Moderation</h3>
+          <div class="actions" style="margin-top:0">
+            <button class="btn warn" onclick="warnDialog()">Warn</button>
+            <button class="btn danger" onclick="suspendDialog()">Suspend</button>
+            <button class="btn danger" onclick="banDialog()">Ban</button>
+            ${u.suspendedUntil ? '<button class="btn" onclick="unsuspend()">Lift suspension</button>' : ''}
+          </div>
+        </div>
+        <div class="card">
+          <h3>Badges</h3>
+          <div class="badges">${BADGES.map(([k, l]) => `<button class="badge-toggle${u.badges.includes(k) ? ' on' : ''}" onclick="toggleBadge('${k}')">${l}</button>`).join('')}</div>
+        </div>
+      </div>
+      <div class="card">
+        <h3>Warnings (${data.warnings.length})</h3>
+        ${data.warnings.map((w) => `<div class="warn-item"><div class="meta">${esc(w.reason)}<br><small>${fmt(w.createdAt)}</small></div><button class="btn" onclick="removeWarning('${esc(w.id)}')">Remove</button></div>`).join('') || '<div style="color:var(--text-3)">No warnings</div>'}
+      </div>
+      <div class="card">
+        <h3>Servers</h3>
+        <div style="color:var(--text-2)">${data.servers.map((s) => esc(s.name)).join(', ') || 'None'}</div>
+      </div>
+    </div>`;
+  selectedUser = u;
+}
+let selectedUser = null;
+
+function dialog(title, inner, confirmLabel, danger, onConfirm) {
+  $('modal-body').innerHTML = `<h2>${title}</h2>${inner}<div class="actions" style="justify-content:flex-end;margin-top:16px">
+    <button class="btn" id="m-cancel">Cancel</button><button class="btn ${danger ? 'danger' : 'primary'}" id="m-ok">${confirmLabel}</button></div>`;
+  $('modal').classList.add('show');
+  $('m-cancel').onclick = () => $('modal').classList.remove('show');
+  $('m-ok').onclick = async () => { try { await onConfirm(); $('modal').classList.remove('show'); } catch { /* toast shown */ } };
+}
+
+async function refresh() { await Promise.all([loadUsers(), loadStats()]); if (selected) openUser(selected); }
+
+async function sendDm() {
+  const text = $('dm-text').value.trim();
+  if (!text) return;
+  await api('POST', '/message', { userId: selected, content: text });
+  $('dm-text').value = '';
+  toast('Message sent');
+}
+function warnDialog() {
+  dialog(`Warn ${esc(selectedUser.displayName)}`, '<div class="field"><label>Reason</label><textarea id="m-reason" rows="3"></textarea></div>', 'Send warning', false, async () => {
+    await api('POST', '/warn', { userId: selected, reason: $('m-reason').value });
+    toast('Warning sent'); refresh();
+  });
+}
+function suspendDialog() {
+  dialog(`Suspend ${esc(selectedUser.displayName)}`, `
+    <div class="field"><label>Length</label><select id="m-hours">
+      <option value="1">1 hour</option><option value="6">6 hours</option><option value="24" selected>1 day</option><option value="72">3 days</option>
+      <option value="168">7 days</option><option value="720">30 days</option><option value="2160">90 days</option></select></div>
+    <div class="field"><label>Reason</label><textarea id="m-reason" rows="3"></textarea></div>`, 'Suspend', true, async () => {
+    await api('POST', '/suspend', { userId: selected, hours: Number($('m-hours').value), reason: $('m-reason').value });
+    toast('Account suspended'); refresh();
+  });
+}
+function banDialog() {
+  dialog(`Ban ${esc(selectedUser.displayName)}`, '<div class="field"><label>Reason</label><textarea id="m-reason" rows="3"></textarea></div>', 'Ban permanently', true, async () => {
+    await api('POST', '/suspend', { userId: selected, hours: 0, reason: $('m-reason').value });
+    toast('Account banned'); refresh();
+  });
+}
+async function unsuspend() { await api('POST', '/unsuspend', { userId: selected }); toast('Suspension lifted'); refresh(); }
+async function forceLogout() { await api('POST', '/logout', { userId: selected }); toast('Logged out everywhere'); }
+async function removeWarning(id) { await api('POST', '/warnings/delete', { id }); refresh(); }
+async function toggleBadge(k) {
+  const badges = selectedUser.badges.includes(k) ? selectedUser.badges.filter((b) => b !== k) : [...selectedUser.badges, k];
+  await api('POST', '/badges', { userId: selected, badges });
+  refresh();
+}
+
+async function loadChannels() {
+  try {
+    const list = await api('GET', '/channels');
+    $('channel-select').innerHTML = list.map((c) => `<option value="${esc(c.id)}">${esc(c.serverName)}  /  #${esc(c.name)}</option>`).join('')
+      || '<option value="">The official account is not in any server</option>';
+  } catch { /* toast shown */ }
+}
+
+document.querySelectorAll('.nav-btn').forEach((b) => b.addEventListener('click', () => {
+  document.querySelectorAll('.nav-btn').forEach((x) => x.classList.toggle('active', x === b));
+  document.querySelectorAll('.view').forEach((v) => v.classList.toggle('active', v.id === `view-${b.dataset.view}`));
+  if (b.dataset.view === 'channels') loadChannels();
+}));
+$('list').addEventListener('click', (e) => { const r = e.target.closest('.row'); if (r) openUser(r.dataset.id); });
+let searchTimer;
+$('search').addEventListener('input', () => { clearTimeout(searchTimer); searchTimer = setTimeout(loadUsers, 250); });
+$('broadcast-send').onclick = () => {
+  const content = $('broadcast-text').value.trim();
+  if (!content) return;
+  dialog('Message everyone', '<div style="color:var(--text-2)">Every user gets this as a DM from Bliscord.</div>', 'Send', false, async () => {
+    const r = await api('POST', '/broadcast', { content });
+    $('broadcast-text').value = '';
+    toast(`Sent to ${r.sent} users`);
+  });
+};
+$('channel-send').onclick = async () => {
+  const content = $('channel-text').value.trim();
+  if (!content || !$('channel-select').value) return;
+  await api('POST', '/channel-message', { channelId: $('channel-select').value, content });
+  $('channel-text').value = '';
+  toast('Posted');
+};
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') $('modal').classList.remove('show'); });
+
+refresh();
+setTimeout(() => { if (!users.length) refresh(); }, 1500);
+setInterval(loadStats, 15000);
+</script>
+</body>
+</html>

@@ -28,6 +28,13 @@ export function Badges({ user, className = '' }) {
 
 /** Small check seal shown next to verified users' names. */
 export function VerifiedMark({ user, size = 16 }) {
+  if (user?.badges?.includes('official')) {
+    return (
+      <span className="official-tag" data-tip="Official Bliscord account" data-tip-fast>
+        <Icon.Check size={11} strokeWidth={3} />OFFICIAL
+      </span>
+    );
+  }
   if (!user?.badges?.includes('verified')) return null;
   return (
     <span className="verified-mark" data-tip="Verified" data-tip-fast>

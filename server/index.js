@@ -7,7 +7,7 @@ import cors from 'cors';
 import multer from 'multer';
 import bcrypt from 'bcryptjs';
 import { Server } from 'socket.io';
-import { q, tx, newId, newInviteCode, UPLOAD_DIR } from './db.js';
+import { q, tx, newId, newInviteCode, UPLOAD_DIR, DATA_DIR } from './db.js';
 import { getIceServers, turnConfigured } from './ice.js';
 import { GifError, gifCategories, klipyKey, searchGifs, trendingGifs } from './gifs.js';
 import {
@@ -408,6 +408,8 @@ app.post('/api/auth/login', route(async (req) => {
   const user = q('SELECT * FROM users WHERE username = ? OR email = ?').get(login, login);
   const ok = user && await bcrypt.compare(String(req.body.password || ''), user.password_hash);
   if (!ok) fail('Incorrect login or password');
+  const suspension = suspensionMessage(user);
+  if (suspension) fail(suspension);
   return { token: createSession(user.id) };
 }));
 
@@ -494,6 +496,7 @@ io.use((socket, next) => {
   const token = socket.handshake.auth?.token;
   const row = token && q('SELECT user_id FROM sessions WHERE token = ?').get(String(token));
   if (!row) return next(new Error('unauthorized'));
+  if (suspensionMessage(getUserRow(row.user_id))) return next(new Error('unauthorized'));
   socket.data.userId = row.user_id;
   socket.data.token = String(token);
   next();
@@ -1340,6 +1343,7 @@ io.on('connection', (socket) => {
     const access = channelAccess(uid, channelId, P.SEND_MESSAGES);
     if (access.kind === 'channel' && !isTextType(access.channel.type)) fail('You cannot send messages here');
     if (access.kind === 'dm' && isBlockedEitherWay(uid, access.otherId)) fail('You cannot message this user');
+    if (access.kind === 'dm' && access.otherId === SYSTEM_ID) fail('This chat is reserved for official Bliscord notifications');
     const text = str(content, 4000, { trim: false }).replace(/^\s+|\s+$/g, '');
     const files = sanitizeAttachments(attachments);
     if (!text && !files.length) fail('Message is empty');
@@ -1485,6 +1489,7 @@ io.on('connection', (socket) => {
       : q('SELECT * FROM users WHERE username = ?').get(str(username, 32).toLowerCase().replace(/^@/, ''));
     if (!target) fail('No user found with that username');
     if (target.id === uid) fail('You cannot add yourself');
+    if (target.id === SYSTEM_ID) fail('You cannot add this account');
     const mine = relationship(uid, target.id);
     const theirs = relationship(target.id, uid);
     if (mine === 'friend') fail('You are already friends');
@@ -1674,6 +1679,199 @@ io.on('connection', (socket) => {
     }
   });
 });
+
+/* ------------------------------------------------------------------ */
+/* Official Bliscord account and admin API                             */
+/* ------------------------------------------------------------------ */
+
+const SYSTEM_ID = 'bliscord-official';
+const OFFICIAL_INVITE = '4mKGgJdE';
+const fmtDate = (t) => new Date(t).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' });
+
+function suspensionMessage(row) {
+  if (!row?.suspended_until || row.suspended_until <= now()) return '';
+  const reason = row.suspend_reason ? ` Reason: ${row.suspend_reason}` : '';
+  if (row.suspended_until >= 8e15) return `This account has been banned from Bliscord.${reason}`;
+  return `This account is suspended until ${fmtDate(row.suspended_until)}.${reason}`;
+}
+
+function ensureSystemAccount() {
+  const avatar = '/uploads/bliscord-official.png';
+  try {
+    const target = path.join(UPLOAD_DIR, 'bliscord-official.png');
+    if (!fs.existsSync(target)) fs.copyFileSync(path.join(import.meta.dirname, '..', 'build', 'icon.png'), target);
+  } catch { /* the icon is optional */ }
+  if (!getUserRow(SYSTEM_ID)) {
+    // The '!' hash can never match a password, so nobody can log in as this account.
+    q(`INSERT INTO users (id, username, display_name, email, password_hash, avatar, banner_color, bio, badges, created_at)
+       VALUES (?, 'bliscord', 'Bliscord', 'system@bliscord.invalid', '!', ?, '#4f7cff', 'Official Bliscord notifications', '["official"]', ?)`)
+      .run(SYSTEM_ID, avatar, now());
+  }
+  const official = q('SELECT id FROM servers WHERE invite_code = ?').get(OFFICIAL_INVITE);
+  if (official && !q('SELECT 1 FROM members WHERE server_id = ? AND user_id = ?').get(official.id, SYSTEM_ID)) {
+    q('INSERT INTO members (server_id, user_id, role, joined_at) VALUES (?, ?, ?, ?)').run(official.id, SYSTEM_ID, 'member', now());
+  }
+}
+ensureSystemAccount();
+
+/** Sends a DM from the official account. */
+function sendSystemDm(userId, content) {
+  const target = getUserRow(userId);
+  if (!target || target.id === SYSTEM_ID) fail('User not found');
+  const [a, b] = [SYSTEM_ID, target.id].sort();
+  let dm = q('SELECT * FROM dms WHERE user_a = ? AND user_b = ?').get(a, b);
+  const created = !dm;
+  if (!dm) {
+    q('INSERT INTO dms (id, user_a, user_b, created_at) VALUES (?, ?, ?, ?)').run(newId(), a, b, now());
+    dm = q('SELECT * FROM dms WHERE user_a = ? AND user_b = ?').get(a, b);
+  }
+  const id = newId();
+  const t = now();
+  q("INSERT INTO messages (id, channel_id, author_id, content, attachments, mentions, created_at) VALUES (?, ?, ?, ?, '[]', '{}', ?)")
+    .run(id, dm.id, SYSTEM_ID, str(content, 4000, { trim: false }).trim(), t);
+  q('UPDATE dms SET last_message_at = ? WHERE id = ?').run(t, dm.id);
+  if (created) io.to('user:' + target.id).emit('dm:create', { dm: serializeDm(dm, target.id), user: publicUser(getUserRow(SYSTEM_ID)) });
+  io.to('user:' + target.id).emit('message:new', serializeMessage(q('SELECT * FROM messages WHERE id = ?').get(id)));
+  return id;
+}
+
+// The admin app runs on this PC and authenticates with a token stored next to the database.
+const ADMIN_TOKEN_FILE = path.join(DATA_DIR, 'admin-token.txt');
+if (!fs.existsSync(ADMIN_TOKEN_FILE)) fs.writeFileSync(ADMIN_TOKEN_FILE, crypto.randomBytes(32).toString('hex'));
+const ADMIN_TOKEN = fs.readFileSync(ADMIN_TOKEN_FILE, 'utf8').trim();
+
+function adminGuard(req, res, next) {
+  const local = ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress);
+  // Requests through the Cloudflare tunnel also arrive from localhost, but carry these headers.
+  const tunneled = Boolean(req.headers['cf-connecting-ip'] || req.headers['cf-ray']);
+  const token = String(req.headers['x-admin-token'] || '');
+  const ok = token.length === ADMIN_TOKEN.length && crypto.timingSafeEqual(Buffer.from(token), Buffer.from(ADMIN_TOKEN));
+  if (!local || tunneled || !ok) return res.status(403).json({ error: 'Forbidden' });
+  next();
+}
+
+function adminUser(row) {
+  return {
+    ...publicUser(row),
+    email: row.email,
+    suspendedUntil: row.suspended_until && row.suspended_until > now() ? row.suspended_until : null,
+    suspendReason: row.suspend_reason,
+    warnings: q('SELECT COUNT(*) AS c FROM warnings WHERE user_id = ?').get(row.id).c,
+  };
+}
+
+function kickSessions(userId) {
+  q('DELETE FROM sessions WHERE user_id = ?').run(userId);
+  for (const sock of io.sockets.sockets.values()) if (sock.data.userId === userId) sock.disconnect(true);
+}
+
+const userOr404 = (id) => getUserRow(String(id || '')) || fail('User not found');
+const admin = express.Router();
+admin.use(adminGuard);
+
+admin.get('/stats', route(() => ({
+  users: q('SELECT COUNT(*) AS c FROM users WHERE id != ?').get(SYSTEM_ID).c,
+  online: online.size,
+  servers: q('SELECT COUNT(*) AS c FROM servers').get().c,
+  messages: q('SELECT COUNT(*) AS c FROM messages').get().c,
+  suspended: q('SELECT COUNT(*) AS c FROM users WHERE suspended_until > ?').get(now()).c,
+})));
+
+admin.get('/users', route((req) => {
+  const raw = str(req.query.q, 64);
+  const term = `%${raw}%`;
+  return q(`SELECT * FROM users WHERE id != ? AND (username LIKE ? OR display_name LIKE ? OR email LIKE ? OR id = ?)
+            ORDER BY created_at DESC LIMIT 200`).all(SYSTEM_ID, term, term, term, raw).map(adminUser);
+}));
+
+admin.get('/users/:id', route((req) => {
+  const row = userOr404(req.params.id);
+  return {
+    user: adminUser(row),
+    warnings: q('SELECT id, reason, created_at AS createdAt FROM warnings WHERE user_id = ? ORDER BY created_at DESC').all(row.id),
+    servers: q('SELECT s.id, s.name FROM members m JOIN servers s ON s.id = m.server_id WHERE m.user_id = ?').all(row.id),
+  };
+}));
+
+admin.post('/message', route((req) => {
+  const content = str(req.body.content, 4000) || fail('Message is empty');
+  return { id: sendSystemDm(userOr404(req.body.userId).id, content) };
+}));
+
+admin.post('/broadcast', route((req) => {
+  const content = str(req.body.content, 4000) || fail('Message is empty');
+  const ids = q('SELECT id FROM users WHERE id != ? AND (suspended_until IS NULL OR suspended_until < ?)').all(SYSTEM_ID, now()).map((r) => r.id);
+  for (const id of ids) sendSystemDm(id, content);
+  return { sent: ids.length };
+}));
+
+admin.post('/warn', route((req) => {
+  const row = userOr404(req.body.userId);
+  const reason = str(req.body.reason, 500) || fail('Give a reason');
+  q('INSERT INTO warnings (id, user_id, reason, created_at) VALUES (?, ?, ?, ?)').run(newId(), row.id, reason, now());
+  sendSystemDm(row.id, `**You have received a warning from Bliscord Safety.**\n\nReason: ${reason}\n\nFurther violations may lead to your account being suspended.`);
+  return adminUser(getUserRow(row.id));
+}));
+
+admin.post('/warnings/delete', route((req) => {
+  q('DELETE FROM warnings WHERE id = ?').run(String(req.body.id || ''));
+  return true;
+}));
+
+admin.post('/suspend', route((req) => {
+  const row = userOr404(req.body.userId);
+  const hours = Math.max(0, Number(req.body.hours) || 0);
+  const reason = str(req.body.reason, 500);
+  const until = hours > 0 ? now() + hours * 3600_000 : 9e15;
+  q('UPDATE users SET suspended_until = ?, suspend_reason = ? WHERE id = ?').run(until, reason, row.id);
+  const why = reason ? `\n\nReason: ${reason}` : '';
+  sendSystemDm(row.id, hours > 0
+    ? `**Your account has been suspended until ${fmtDate(until)}.**${why}`
+    : `**Your account has been banned from Bliscord.**${why}`);
+  kickSessions(row.id);
+  return adminUser(getUserRow(row.id));
+}));
+
+admin.post('/unsuspend', route((req) => {
+  const row = userOr404(req.body.userId);
+  q("UPDATE users SET suspended_until = NULL, suspend_reason = '' WHERE id = ?").run(row.id);
+  sendSystemDm(row.id, 'Your account suspension has been lifted. Welcome back.');
+  return adminUser(getUserRow(row.id));
+}));
+
+admin.post('/badges', route((req) => {
+  const row = userOr404(req.body.userId);
+  const allowed = ['founder', 'developer', 'verified', 'staff', 'early'];
+  const badges = allowed.filter((b) => Array.isArray(req.body.badges) && req.body.badges.includes(b));
+  q('UPDATE users SET badges = ? WHERE id = ?').run(JSON.stringify(badges), row.id);
+  broadcastUser(row.id);
+  return adminUser(getUserRow(row.id));
+}));
+
+admin.post('/logout', route((req) => {
+  kickSessions(userOr404(req.body.userId).id);
+  return true;
+}));
+
+admin.get('/channels', route(() => q(`SELECT c.id, c.name, c.type, s.name AS serverName FROM members m
+  JOIN servers s ON s.id = m.server_id JOIN channels c ON c.server_id = s.id
+  WHERE m.user_id = ? AND c.type IN ('text', 'announcement') ORDER BY s.name, c.position`).all(SYSTEM_ID)));
+
+admin.post('/channel-message', route((req) => {
+  const ch = q('SELECT * FROM channels WHERE id = ?').get(String(req.body.channelId || '')) || fail('Channel not found');
+  const ctx = serverCtx(ch.server_id);
+  if (!ctx || !isMember(ctx, SYSTEM_ID)) fail('The official account is not in that server');
+  const content = str(req.body.content, 4000) || fail('Message is empty');
+  const access = { kind: 'channel', ctx, channel: ch, perms: ALL };
+  const id = newId();
+  q("INSERT INTO messages (id, channel_id, author_id, content, attachments, mentions, created_at) VALUES (?, ?, ?, ?, '[]', ?, ?)")
+    .run(id, ch.id, SYSTEM_ID, content, JSON.stringify(computeMentions(access, SYSTEM_ID, content)), now());
+  emitToChannel(access, 'message:new', serializeMessage(q('SELECT * FROM messages WHERE id = ?').get(id)));
+  if (ch.type === 'announcement') crosspost(access, SYSTEM_ID, id, content, []);
+  return { id };
+}));
+
+app.use('/api/admin', admin);
 
 server.listen(PORT, () => {
   console.log(`Bliscord server listening on http://localhost:${PORT}`);

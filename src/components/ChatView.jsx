@@ -868,6 +868,7 @@ export function DmView({ dmId }) {
   if (!dm || !user) return null;
   const inThisCall = v.roomId === dmId;
   const blocked = relationship === 'blocked';
+  const official = Boolean(user.badges?.includes('official'));
 
   const intro = (
     <div className="channel-intro dm-intro">
@@ -896,7 +897,7 @@ export function DmView({ dmId }) {
         title={displayName(user)}
         onTitleClick={(e) => openPopout(user.id, e.currentTarget.getBoundingClientRect())}
       >
-        {!inThisCall && !blocked && (
+        {!inThisCall && !blocked && !official && (
           <>
             <IconButton icon={Icon.Phone} tip="Start voice call" side="bottom" onClick={() => startCall(dmId)} />
             <IconButton icon={Icon.Video} tip="Start video call" side="bottom" onClick={() => startCall(dmId, { video: true })} />
@@ -913,9 +914,9 @@ export function DmView({ dmId }) {
       {(callActive || inThisCall) && <CallStage roomId={dmId} />}
       <ChatPane
         channelId={dmId}
-        placeholder={blocked ? 'You cannot message this user' : `Message @${displayName(user)}`}
+        placeholder={official ? 'This chat is reserved for official Bliscord notifications' : blocked ? 'You cannot message this user' : `Message @${displayName(user)}`}
         intro={intro}
-        disabled={blocked}
+        disabled={blocked || official}
       />
     </div>
   );

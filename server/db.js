@@ -123,6 +123,8 @@ addColumn('channels', 'slowmode', 'INTEGER NOT NULL DEFAULT 0');
 addColumn('channels', 'user_limit', 'INTEGER NOT NULL DEFAULT 0');
 addColumn('messages', 'mentions', "TEXT NOT NULL DEFAULT '{}'");
 addColumn('messages', 'crosspost', 'TEXT');
+addColumn('users', 'suspended_until', 'INTEGER');
+addColumn('users', 'suspend_reason', "TEXT NOT NULL DEFAULT ''");
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS roles (
@@ -169,6 +171,13 @@ CREATE TABLE IF NOT EXISTS favorite_gifs (
   data TEXT NOT NULL,
   created_at INTEGER NOT NULL,
   PRIMARY KEY (user_id, url)
+);
+
+CREATE TABLE IF NOT EXISTS warnings (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  reason TEXT NOT NULL,
+  created_at INTEGER NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS channel_follows (
