@@ -1,5 +1,13 @@
 [
   {
+    "version": "1.4.1",
+    "date": "2026-09-30",
+    "title": "Server tag fix",
+    "items": [
+      "Choosing a server tag in your profile now saves and shows next to your name"
+    ]
+  },
+  {
     "version": "1.4.0",
     "date": "2026-09-30",
     "title": "Discover and server tags",

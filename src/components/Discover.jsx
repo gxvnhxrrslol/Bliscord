@@ -322,19 +322,16 @@ export function DiscoveryTab({ server }) {
   );
 }
 
-/** Profile setting: which server tag to wear. */
-export function TagPicker() {
-  const me = useStore((s) => s.me);
+/** Profile setting: which server tag to wear. Part of the profile draft, saved with it. */
+export function TagPicker({ value, onChange }) {
   const servers = useStore((s) => s.serverOrder.map((id) => s.servers[id]).filter((srv) => srv?.tag));
   if (!servers.length) return null;
-  const current = me.profile?.tagServer || '';
-  const choose = (id) => updateProfile({ profile: { ...(me.profile || {}), tagServer: id || undefined } }).catch((e) => toast(e.message, 'error'));
   return (
     <Field label="Server tag">
       <div className="tag-choices">
-        <button className={`tag-choice${!current ? ' active' : ''}`} onClick={() => choose('')}>None</button>
+        <button className={`tag-choice${!value ? ' active' : ''}`} onClick={() => onChange('')}>None</button>
         {servers.map((srv) => (
-          <button key={srv.id} className={`tag-choice${current === srv.id ? ' active' : ''}`} onClick={() => choose(srv.id)}>
+          <button key={srv.id} className={`tag-choice${value === srv.id ? ' active' : ''}`} onClick={() => onChange(srv.id)}>
             <TagChip tag={srv.tag} tip={null} />
             <span>{srv.name}</span>
           </button>
@@ -342,4 +339,10 @@ export function TagPicker() {
       </div>
     </Field>
   );
+}
+
+/** The tag of the given server, for the profile preview. */
+export function WornTag({ serverId }) {
+  const srv = useStore((s) => (serverId ? s.servers[serverId] : null));
+  return srv?.tag ? <TagChip tag={{ ...srv.tag, serverName: srv.name }} size="lg" /> : null;
 }

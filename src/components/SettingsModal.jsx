@@ -9,7 +9,7 @@ import { Badges, VerifiedMark } from './Badges';
 import { showChangelog } from '../lib/whatsnew';
 import { DECORATIONS, EFFECTS, NAME_STYLES, ProfileEffect, StyledName, profileThemeStyle } from './Cosmetics';
 import Icon from './Icons';
-import { TagPicker } from './Discover';
+import { TagPicker, WornTag } from './Discover';
 
 /* ---------------- Settings layer shell ---------------- */
 
@@ -285,7 +285,7 @@ function ProfileTab() {
               render={(id) => <Avatar user={demoUser({ decoration: id })} size={40} />}
             />
           </Field>
-          <TagPicker />
+          <TagPicker value={draft.profile.tagServer || ''} onChange={(id) => setCosmetic('tagServer', id || undefined)} />
           <Field label="Profile effect">
             <OptionTiles
               options={EFFECTS}
@@ -322,7 +322,7 @@ function ProfileTab() {
             <Badges user={me} className="profile-badges" />
             <div className="profile-body">
               <div className="profile-names">
-                <h3><StyledName user={preview} color={preview.accentColor}>{preview.displayName || me.username}</StyledName><VerifiedMark user={me} size={18} /></h3>
+                <h3><StyledName user={preview} color={preview.accentColor}>{preview.displayName || me.username}</StyledName><VerifiedMark user={me} size={18} /><WornTag serverId={draft.profile.tagServer} /></h3>
                 <div className="profile-username">@{me.username}{preview.pronouns && <span className="profile-pronouns">{preview.pronouns}</span>}</div>
               </div>
               {preview.customStatus && <div className="profile-status">{preview.customStatus}</div>}
