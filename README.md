@@ -37,9 +37,13 @@ node scripts/seed-dev.mjs
 node scripts/smoke-test.mjs   # checks every realtime feature end to end
 ```
 
+## Host it from your PC (free)
+
+Double-click `start-server.cmd`. It runs the server plus a free Cloudflare tunnel (`tools/cloudflared.exe`, from https://github.com/cloudflare/cloudflared/releases). The tunnel address changes each time it starts, so `scripts/tunnel.mjs` publishes it to `server.json` on the `server-url` branch, and the app looks it up automatically (`discoveryUrl` in `app.config.json`). Bliscord is online while your PC is on and that window is open.
+
 ## Put the server online
 
-Pick one. Each option stores data on a persistent disk so nothing is lost on redeploy.
+Or use a host that stays up 24/7. Pick one. Each option stores data on a persistent disk so nothing is lost on redeploy.
 
 **Fly.io** (cheap, pick a region near your users, e.g. `yyz` Toronto or `iad` Virginia)
 ```bash
