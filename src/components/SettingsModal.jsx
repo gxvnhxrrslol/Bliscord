@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { DEFAULT_SETTINGS, updateSettings, useStore } from '../lib/store';
 import { closeModal, logout, openModal, toast, updateAccount, updateProfile } from '../lib/actions';
-import { assetUrl, getServerUrl, native } from '../lib/api';
+import { assetUrl, native } from '../lib/api';
 import { voice, SCREEN_QUALITY } from '../lib/voice';
 import { colorFor, fullDate } from '../lib/format';
 import { Avatar, Button, Field, Select, Slider, Switch, isTopLayer, pickFiles, uploadImage } from './ui';
@@ -121,9 +121,6 @@ function AccountTab({ onEditProfile }) {
         <h3>Session</h3>
         <div className="kv">
           <span>Member since</span><b>{fullDate(me.createdAt)}</b>
-        </div>
-        <div className="kv">
-          <span>Server</span><b className="mono">{getServerUrl()}</b>
         </div>
         <Button variant="danger" onClick={logout}><Icon.Logout size={16} /> Log out</Button>
       </div>
