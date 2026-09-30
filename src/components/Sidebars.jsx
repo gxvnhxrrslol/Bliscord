@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { getState, updateSettings, useStore } from '../lib/store';
 import {
   channelTree, deleteChannel, joinVoice, leaveServer, leaveVoice, markRead, moderateVoice, openHome, openMenu, openModal,
-  openPopout, selectChannel, setStatus,
+  openPopout, selectChannel, setStatus, updateServer,
 } from '../lib/actions';
 import { useVoice, voice } from '../lib/voice';
 import { toggleCamera, toggleScreen } from '../lib/media';
@@ -183,7 +183,14 @@ function ChannelRow({ channel, active, server }) {
   const menu = (e) => openMenu(e, [
     ...(isText ? [{ label: 'Mark as read', icon: Icon.Check, onClick: () => markRead(channel.id, channel.lastMessageId) }] : []),
     ...(isVoice && v.roomId !== channel.id && has(perms, P.CONNECT) ? [{ label: 'Join voice', icon: Icon.Speaker, onClick: open }] : []),
+    ...(channel.type === 'announcement' && Object.keys(getState().servers).some((id) => has(permsFor(getState(), id), P.MANAGE_CHANNELS))
+      ? [{ label: 'Follow', icon: Icon.Follow, onClick: () => openModal('followChannel', { channelId: channel.id }) }] : []),
     { label: 'Copy channel ID', icon: Icon.Copy, onClick: () => copyText(channel.id) },
+    ...(isText && has(permsFor(getState(), channel.serverId), P.MANAGE_SERVER) ? [{
+      label: server?.rulesChannelId === channel.id ? 'Remove as rules channel' : 'Set as rules channel',
+      icon: Icon.Book,
+      onClick: () => updateServer(channel.serverId, { rulesChannelId: server?.rulesChannelId === channel.id ? null : channel.id }).catch(() => {}),
+    }] : []),
     ...(canEdit ? [{ separator: true }, { label: 'Edit channel', icon: Icon.Settings, onClick: () => openModal('channelSettings', { channelId: channel.id }) }] : []),
     ...(has(perms, P.MANAGE_CHANNELS) ? [{ label: 'Delete channel', icon: Icon.Trash, danger: true, onClick: () => openModal('confirm', {
       title: `Delete ${isVoice ? '' : '#'}${channel.name}`,

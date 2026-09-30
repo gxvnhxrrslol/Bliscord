@@ -52,7 +52,7 @@ export default function Shell() {
     }
   } else if (view.channelId && channelType === 'voice') {
     content = <VoiceChannelView key={view.channelId} channelId={view.channelId} />;
-  } else if (view.channelId && channelType === 'text') {
+  } else if (view.channelId && (channelType === 'text' || channelType === 'announcement')) {
     content = <ChannelView key={view.channelId} channelId={view.channelId} />;
     if (showMembers) aside = <MemberList serverId={view.serverId} />;
   }

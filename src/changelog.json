@@ -1,5 +1,20 @@
 [
   {
+    "version": "1.3.0",
+    "date": "2026-09-30",
+    "title": "GIFs and announcements",
+    "items": [
+      "GIF picker next to the send button with search, trending and categories",
+      "Star any GIF to save it to your favorites, including GIFs people send in chat",
+      "Text channel names can use emojis and symbols",
+      "Create a rules channel directly, or set one from channel settings or the right-click menu",
+      "Follow an announcement channel to get its posts in a channel of your own server",
+      "Switch a text channel to an announcement channel and back",
+      "New announcements notify you, with a switch in Notifications settings",
+      "Announcement channels no longer open to a blank screen"
+    ]
+  },
+  {
     "version": "1.2.0",
     "date": "2026-09-30",
     "title": "Roles, permissions and profile styles",

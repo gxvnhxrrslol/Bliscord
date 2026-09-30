@@ -89,6 +89,18 @@ export const authApi = {
   logout: (token) => post('/api/auth/logout', {}, token).catch(() => {}),
 };
 
+export async function getJson(path) {
+  let res;
+  try {
+    res = await fetch(getServerUrl() + path, { headers: { Authorization: `Bearer ${getToken()}` } });
+  } catch {
+    throw new Error('Could not reach the server');
+  }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'Request failed');
+  return data;
+}
+
 export function uploadFile(file, onProgress) {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();

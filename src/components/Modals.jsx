@@ -1,20 +1,21 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { getState, updateSettings, useStore } from '../lib/store';
 import {
-  createChannel, createServer, joinServer, openDm, openHome, previewInvite, resetInvite, selectChannel,
+  createChannel, createServer, followChannel, joinServer, openDm, openHome, orderedChannels, previewInvite, resetInvite, selectChannel,
   selectServer, setMemberRoles, setNickname, toast,
 } from '../lib/actions';
 import { assetUrl, native } from '../lib/api';
 import { goLive } from '../lib/media';
 import { SCREEN_QUALITY } from '../lib/voice';
 import { displayName } from '../lib/format';
-import { Avatar, Button, Field, ServerGlyph, Spinner, Switch, copyText, pickFiles, uploadImage, Modal } from './ui';
+import { Avatar, Button, Field, Select, ServerGlyph, Spinner, Switch, copyText, pickFiles, uploadImage, Modal } from './ui';
 import SettingsModal from './SettingsModal';
 import ServerSettingsModal from './ServerSettings';
 import WhatsNewModal from './WhatsNew';
 import ChannelSettingsModal from './ChannelSettings';
 import { can, P } from '../lib/perms';
 import Icon from './Icons';
+import { ChannelIcon } from './channelUi';
 
 /* ---------------- Image picker ---------------- */
 
@@ -200,7 +201,8 @@ function CreateChannelModal({ serverId, type: initialType = 'text', parentId: in
   const [busy, setBusy] = useState(false);
   const roles = useStore((s) => (s.roles[serverId] || []).filter((r) => r.id !== serverId));
   const parent = useStore((s) => (initialParent ? s.channels[initialParent] : null));
-  const isText = type === 'text' || type === 'announcement';
+  const canManageServer = useStore((s) => can(s, serverId, P.MANAGE_SERVER));
+  const isText = type === 'text' || type === 'announcement' || type === 'rules';
 
   const create = async (close) => {
     if (!name.trim()) return;
@@ -218,6 +220,7 @@ function CreateChannelModal({ serverId, type: initialType = 'text', parentId: in
     ['text', Icon.Hash, 'Text'],
     ['voice', Icon.Speaker, 'Voice'],
     ['announcement', Icon.Megaphone, 'Announcement'],
+    ...(canManageServer ? [['rules', Icon.Book, 'Rules']] : []),
   ];
 
   return (
@@ -239,13 +242,13 @@ function CreateChannelModal({ serverId, type: initialType = 'text', parentId: in
           )}
           <Field label={isCategory ? 'Category name' : 'Channel name'}>
             <div className="input-icon">
-              {isCategory ? <Icon.Folder size={17} /> : type === 'voice' ? <Icon.Speaker size={17} /> : type === 'announcement' ? <Icon.Megaphone size={17} /> : <Icon.Hash size={17} />}
+              {isCategory ? <Icon.Folder size={17} /> : type === 'voice' ? <Icon.Speaker size={17} /> : type === 'announcement' ? <Icon.Megaphone size={17} /> : type === 'rules' ? <Icon.Book size={17} /> : <Icon.Hash size={17} />}
               <input
                 className="input"
                 autoFocus
                 value={name}
                 maxLength={100}
-                placeholder={isCategory ? 'New category' : isText ? 'new-channel' : 'Hangout'}
+                placeholder={isCategory ? 'New category' : type === 'rules' ? 'rules' : isText ? 'new-channel' : 'Hangout'}
                 onChange={(e) => setName(isText ? e.target.value.toLowerCase().replace(/\s+/g, '-') : e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && create(close)}
               />
@@ -492,7 +495,7 @@ function QuickSwitcherModal() {
       if (u && match(`${u.displayName} ${u.username}`)) items.push({ key: `f${id}`, kind: 'dm', user: u, label: displayName(u), sub: `@${u.username}`, go: () => openDm(id), rank: 0 });
     }
     for (const c of Object.values(state.channels)) {
-      if (match(c.name)) items.push({ key: c.id, kind: c.type, label: c.name, sub: state.servers[c.serverId]?.name, go: () => selectChannel(c.serverId, c.id), rank: 0 });
+      if (c.type !== 'category' && match(c.name)) items.push({ key: c.id, kind: 'channel', channel: c, label: c.name, sub: state.servers[c.serverId]?.name, go: () => selectChannel(c.serverId, c.id), rank: 0 });
     }
     for (const s of Object.values(state.servers)) {
       if (match(s.name)) items.push({ key: s.id, kind: 'server', server: s, label: s.name, go: () => selectServer(s.id), rank: 0 });
@@ -526,8 +529,7 @@ function QuickSwitcherModal() {
               <button key={r.key} className={`switcher-item${i === index ? ' active' : ''}`} onMouseEnter={() => setIndex(i)} onClick={() => { r.go(); close(); }}>
                 {r.kind === 'dm' && <Avatar user={r.user} size={24} status={r.user.presence} />}
                 {r.kind === 'server' && <ServerGlyph server={r.server} size={24} />}
-                {r.kind === 'text' && <Icon.Hash size={20} />}
-                {r.kind === 'voice' && <Icon.Speaker size={20} />}
+                {r.kind === 'channel' && <ChannelIcon channel={r.channel} server={state.servers[r.channel.serverId]} size={20} />}
                 <span className="switcher-label">{r.label}</span>
                 {r.sub && <span className="switcher-sub">{r.sub}</span>}
               </button>
@@ -572,7 +574,56 @@ function NewDmModal() {
   );
 }
 
+/* ---------------- Follow an announcement channel ---------------- */
+
+function FollowChannelModal({ channelId }) {
+  const source = useStore((s) => s.channels[channelId]);
+  const sourceServer = useStore((s) => s.servers[s.channels[channelId]?.serverId]);
+  const state = getState();
+  const servers = state.serverOrder.map((id) => state.servers[id])
+    .filter((srv) => srv && can(state, srv.id, P.MANAGE_CHANNELS));
+  const [serverId, setServerId] = useState(servers.find((srv) => srv.id !== source?.serverId)?.id || servers[0]?.id || '');
+  const targets = useMemo(() => (serverId ? orderedChannels(getState(), serverId) : [])
+    .filter((c) => (c.type === 'text' || c.type === 'announcement') && c.id !== channelId && can(getState(), serverId, P.MANAGE_CHANNELS, c.id)),
+  [serverId, channelId]);
+  const [targetId, setTargetId] = useState('');
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { setTargetId(targets[0]?.id || ''); }, [targets]);
+  if (!source) return null;
+
+  const follow = async (close) => {
+    setBusy(true);
+    try { await followChannel(channelId, targetId); close(); } catch { setBusy(false); }
+  };
+
+  return (
+    <Modal size="sm">
+      {(close) => (
+        <div className="modal-body">
+          <h2>Follow #{source.name}</h2>
+          <span className="modal-sub">{sourceServer?.name}</span>
+          <Field label="Server">
+            <Select value={serverId} options={servers.map((srv) => ({ value: srv.id, label: srv.name }))} onChange={setServerId} />
+          </Field>
+          <Field label="Channel">
+            {targets.length ? (
+              <Select value={targetId} options={targets.map((c) => ({ value: c.id, label: `#${c.name}` }))} onChange={setTargetId} />
+            ) : (
+              <span className="modal-sub">No channels you can manage</span>
+            )}
+          </Field>
+          <div className="modal-footer">
+            <Button variant="ghost" onClick={close}>Cancel</Button>
+            <Button loading={busy} disabled={!targetId} onClick={() => follow(close)}>Follow</Button>
+          </div>
+        </div>
+      )}
+    </Modal>
+  );
+}
+
 export const MODALS = {
+  followChannel: FollowChannelModal,
   createServer: CreateServerModal,
   invite: InviteModal,
   createChannel: CreateChannelModal,

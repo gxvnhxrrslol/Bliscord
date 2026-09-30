@@ -3,13 +3,14 @@ import { getState, setState, useStore, withKey, withoutKey } from '../lib/store'
 import {
   deleteMessage, discardMessage, editMessage, loadMessages, loadOlder, markRead, openMenu, openModal, openPopout,
   retryMessage, sendMessage, sendTyping, stopTyping, startCall, toast, addFriendById, removeFriend, blockUser, unblockUser,
-  acceptFriend, mentionsMe,
+  acceptFriend, mentionsMe, sendGif,
 } from '../lib/actions';
 import { assetUrl, uploadFile } from '../lib/api';
 import { dayLabel, displayName, fileSize, isSameDay, messageTimestamp, nonce, timeOfDay } from '../lib/format';
 import { renderMarkdown } from '../lib/markdown';
 import { useVoice } from '../lib/voice';
-import { Avatar, Button, IconButton, copyText, imageSize, pickFiles, prepareImage } from './ui';
+import { Avatar, Button, IconButton, ServerGlyph, copyText, imageSize, pickFiles, prepareImage } from './ui';
+import GifPicker, { GifStar } from './GifPicker';
 import { CallStage } from './VoiceStage';
 import { VerifiedMark } from './Badges';
 import { StyledName } from './Cosmetics';
@@ -47,7 +48,7 @@ function Attachment({ a }) {
     const w = a.width || 400;
     const h = a.height || 300;
     const scale = Math.min(1, 420 / w, 320 / h);
-    return (
+    const image = (
       <button
         className="att-image"
         style={{ width: Math.round(w * scale), aspectRatio: `${w} / ${h}` }}
@@ -55,6 +56,13 @@ function Attachment({ a }) {
       >
         <img src={url} alt={a.name} loading="lazy" draggable={false} />
       </button>
+    );
+    if (a.type !== 'image/gif') return image;
+    return (
+      <div className="gif-holder">
+        {image}
+        <GifStar gif={{ url: a.url, preview: a.url, width: a.width, height: a.height, upload: true, name: a.name, size: a.size }} />
+      </div>
     );
   }
   if (a.type?.startsWith('video/')) {
@@ -88,6 +96,27 @@ function Attachment({ a }) {
 /* ------------------------------------------------------------------ */
 /* Message                                                             */
 /* ------------------------------------------------------------------ */
+
+// A message that is only a KLIPY GIF link shows as the GIF itself.
+const GIF_LINK_RE = /^https:\/\/([a-z0-9-]+\.)*klipy\.com\/\S+$/i;
+const isGifLink = (text) => GIF_LINK_RE.test(text.trim());
+
+function GifEmbed({ url }) {
+  const [dims, setDims] = useState(null);
+  return (
+    <div className="gif-holder gif-embed">
+      <img
+        src={url}
+        alt=""
+        loading="lazy"
+        draggable={false}
+        onLoad={(e) => setDims({ width: e.currentTarget.naturalWidth, height: e.currentTarget.naturalHeight })}
+        onClick={() => openModal('image', { src: url, name: 'GIF' })}
+      />
+      <GifStar gif={{ url: url.trim(), preview: url.trim(), width: dims?.width || 0, height: dims?.height || 0 }} />
+    </div>
+  );
+}
 
 const JOIN_LINES = [
   (n) => <><b>{n}</b> just landed.</>,
@@ -145,6 +174,21 @@ const MessageItem = memo(function MessageItem({ message: m, grouped, author, mem
   const mine = m.authorId === meId;
   const name = displayName(author, member);
   const popout = (e) => openPopout(m.authorId, e.currentTarget.getBoundingClientRect(), serverId);
+
+  if (m.kind === 'follow') {
+    const src = m.crosspost || {};
+    return (
+      <div className={`msg msg-system${isNew ? ' enter' : ''}`} data-id={m.id}>
+        <div className="msg-gutter">
+          <span className="system-icon follow"><Icon.Follow size={16} /></span>
+        </div>
+        <div className="msg-body">
+          <span className="system-text"><b>{name}</b> followed <b>#{src.channelName}</b> from <b>{src.serverName}</b>.</span>
+          <span className="msg-time" data-tip={new Date(m.createdAt).toLocaleString()}>{messageTimestamp(m.createdAt)}</span>
+        </div>
+      </div>
+    );
+  }
 
   if (m.kind === 'join' || m.kind === 'call') {
     const line = m.kind === 'join'
@@ -207,12 +251,22 @@ const MessageItem = memo(function MessageItem({ message: m, grouped, author, mem
       <div className="msg-gutter">
         {grouped ? (
           <span className="msg-hover-time">{timeOfDay(m.createdAt)}</span>
+        ) : m.crosspost ? (
+          <ServerGlyph server={{ id: m.crosspost.serverId, name: m.crosspost.serverName, icon: m.crosspost.serverIcon }} size={40} />
         ) : (
           <Avatar user={author} size={40} onClick={popout} className="clickable" />
         )}
       </div>
       <div className="msg-body">
-        {!grouped && (
+        {!grouped && m.crosspost && (
+          <div className="msg-head">
+            <span className="msg-author crosspost-name">{m.crosspost.serverName}</span>
+            <span className="crosspost-chip"><Icon.Megaphone size={12} />{m.crosspost.channelName}</span>
+            <span className="crosspost-by" onClick={popout}>{name}</span>
+            <span className="msg-time" data-tip={new Date(m.createdAt).toLocaleString()}>{messageTimestamp(m.createdAt)}</span>
+          </div>
+        )}
+        {!grouped && !m.crosspost && (
           <div className="msg-head">
             <span className="msg-author" onClick={popout}><StyledName user={author} color={nameColor || author?.accentColor}>{name}</StyledName></span>
             <VerifiedMark user={author} size={15} />
@@ -223,7 +277,9 @@ const MessageItem = memo(function MessageItem({ message: m, grouped, author, mem
         {editing ? (
           <EditBox message={m} onDone={() => setState({ editing: null })} />
         ) : (
-          m.content && (
+          m.content && isGifLink(m.content) && !m.editedAt ? (
+            <GifEmbed url={m.content.trim()} />
+          ) : m.content && (
             <div className="msg-content">
               {renderMarkdown(m.content, mentionCtx)}
               {m.editedAt && <span className="msg-edited" data-tip={new Date(m.editedAt).toLocaleString()}>(edited)</span>}
@@ -376,6 +432,7 @@ function MessageList({ channelId, serverId, intro }) {
       rows.push(<div key={`n-${m.id}`} className="new-divider"><span>New</span></div>);
     }
     const grouped = !newDay && prev && prev.authorId === m.authorId && prev.kind === 'default' && m.kind === 'default'
+      && prev.crosspost?.channelId === m.crosspost?.channelId
       && m.createdAt - prev.createdAt < GROUP_WINDOW && !m.replyTo;
     rows.push(
       <MessageItem
@@ -477,6 +534,7 @@ function Composer({ channelId, serverId, placeholder, files, setFiles, disabled,
   const [mention, setMention] = useState(null);
   const replying = useStore((s) => s.replying[channelId]);
   const replyUser = useStore((s) => (replying ? s.users[replying.authorId] : null));
+  const [gifOpen, setGifOpen] = useState(false);
   const ref = useRef(null);
   const candidates = useMentionCandidates(channelId, serverId);
 
@@ -583,6 +641,14 @@ function Composer({ channelId, serverId, placeholder, files, setFiles, disabled,
     }
   };
 
+  const pickGif = (gif) => {
+    sendGif(channelId, gif, getState().replying[channelId]);
+    setState((s) => ({ replying: withoutKey(s.replying, channelId) }));
+    window.dispatchEvent(new CustomEvent('bliscord:scroll-bottom', { detail: channelId }));
+    ref.current?.focus();
+  };
+  const closeGifs = useCallback(() => setGifOpen(false), []);
+
   const onPaste = (e) => {
     const pasted = [...(e.clipboardData?.files || [])];
     if (pasted.length) {
@@ -593,6 +659,7 @@ function Composer({ channelId, serverId, placeholder, files, setFiles, disabled,
 
   return (
     <div className="composer-wrap">
+      {gifOpen && !disabled && <GifPicker onPick={pickGif} onClose={closeGifs} />}
       {mention && matches.length > 0 && (
         <div className="mention-pop">
           {matches.map((c, i) => (
@@ -662,6 +729,14 @@ function Composer({ channelId, serverId, placeholder, files, setFiles, disabled,
             onPaste={onPaste}
             onBlur={() => setTimeout(() => setMention(null), 100)}
           />
+          <button
+            className={`composer-gif${gifOpen ? ' active' : ''}`}
+            onClick={() => setGifOpen((o) => !o)}
+            data-tip="GIFs"
+            disabled={disabled}
+          >
+            <Icon.Gif size={24} />
+          </button>
           <button className={`composer-send${text.trim() || files.length ? ' ready' : ''}`} onClick={submit} disabled={sending || disabled} data-tip="Send">
             {sending ? <span className="spinner" style={{ width: 16, height: 16 }} /> : <Icon.Send size={18} />}
           </button>
@@ -737,6 +812,8 @@ export function ChannelView({ channelId }) {
   const server = useStore((s) => s.servers[s.channels[channelId]?.serverId]);
   const perms = usePerms(channel?.serverId, channelId);
   const isPrivate = useStore((s) => isPrivateChannel(s, s.channels[channelId]));
+  const canFollow = useStore((s) => s.channels[channelId]?.type === 'announcement'
+    && Object.keys(s.servers).some((id) => can(s, id, P.MANAGE_CHANNELS)));
   if (!channel) return null;
   const canManage = has(perms, P.MANAGE_CHANNELS) || has(perms, P.MANAGE_ROLES);
   const canSend = has(perms, P.SEND_MESSAGES);
@@ -759,6 +836,7 @@ export function ChannelView({ channelId }) {
     <div className="chat">
       <ChatHeader icon={<ChannelIcon channel={channel} server={server} isPrivate={isPrivate} size={22} className="header-icon" />} title={channel.name} topic={channel.topic}>
         {channel.slowmode > 0 && <span className="slowmode-chip" data-tip={`Slowmode: ${channel.slowmode}s`}><Icon.Clock size={16} /></span>}
+        {canFollow && <IconButton icon={Icon.Follow} tip="Follow" side="bottom" onClick={() => openModal('followChannel', { channelId })} />}
         <IconButton
           icon={Icon.Users}
           tip={showMembers ? 'Hide members' : 'Show members'}

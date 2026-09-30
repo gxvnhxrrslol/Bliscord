@@ -655,6 +655,10 @@ function NotificationsTab() {
           <span>Sounds</span>
           <Switch checked={s.soundsEnabled} onChange={(v) => updateSettings({ soundsEnabled: v })} />
         </div>
+        <div className="switch-row">
+          <span>New announcements</span>
+          <Switch checked={s.announcementNotifications} onChange={(v) => updateSettings({ announcementNotifications: v })} />
+        </div>
       </div>
     </>
   );

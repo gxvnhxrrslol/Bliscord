@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useStore } from '../lib/store';
-import { deleteChannel, closeAllModals, openMenu, openModal, setChannelPermissions, updateChannel } from '../lib/actions';
+import { deleteChannel, closeAllModals, fetchFollows, openMenu, openModal, setChannelPermissions, unfollowChannel, updateChannel, updateServer } from '../lib/actions';
 import { displayName } from '../lib/format';
 import { has, P, usePerms } from '../lib/perms';
 import { CHANNEL_SCOPED, PERMISSION_GROUPS } from '../../shared/permissions.js';
-import { Avatar, Button, Field, Select, Slider, Switch } from './ui';
+import { Avatar, Button, Field, Select, ServerGlyph, Slider, Switch } from './ui';
 import { SettingsLayer } from './SettingsModal';
 import { CHANNEL_TYPE_LABELS } from './channelUi';
 import Icon from './Icons';
@@ -37,7 +37,7 @@ function OverviewTab({ channel }) {
   const channelsMap = useStore((s) => s.channels);
   const categories = useMemo(() => Object.values(channelsMap).filter((c) => c.serverId === channel.serverId && c.type === 'category'), [channelsMap, channel.serverId]);
   const isText = channel.type === 'text' || channel.type === 'announcement';
-  const initial = () => ({ name: channel.name, topic: channel.topic || '', slowmode: channel.slowmode || 0, userLimit: channel.userLimit || 0, parentId: channel.parentId || '' });
+  const initial = () => ({ name: channel.name, type: channel.type, topic: channel.topic || '', slowmode: channel.slowmode || 0, userLimit: channel.userLimit || 0, parentId: channel.parentId || '' });
   const [draft, setDraft] = useState(initial);
   const [busy, setBusy] = useState(false);
   useEffect(() => { setDraft(initial()); }, [channel.id]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -47,7 +47,7 @@ function OverviewTab({ channel }) {
   const save = async () => {
     setBusy(true);
     const patch = { name: draft.name };
-    if (isText) Object.assign(patch, { topic: draft.topic, slowmode: draft.slowmode });
+    if (isText) Object.assign(patch, { type: draft.type, topic: draft.topic, slowmode: draft.slowmode });
     if (channel.type === 'voice') patch.userLimit = draft.userLimit;
     if (channel.type !== 'category') patch.parentId = draft.parentId || null;
     try { await updateChannel(channel.id, patch); } catch { /* toast shown */ }
@@ -65,6 +65,17 @@ function OverviewTab({ channel }) {
           onChange={(e) => set('name', isText ? e.target.value.toLowerCase().replace(/\s+/g, '-') : e.target.value)}
         />
       </Field>
+      {isText && (
+        <Field label="Channel type">
+          <div className="seg">
+            {[['text', Icon.Hash, 'Text'], ['announcement', Icon.Megaphone, 'Announcement']].map(([t, I, label]) => (
+              <button key={t} className={draft.type === t ? 'active' : ''} onClick={() => set('type', t)}>
+                <I size={15} /> {label}
+              </button>
+            ))}
+          </div>
+        </Field>
+      )}
       {isText && (
         <Field label="Topic">
           <textarea className="input textarea" rows={3} maxLength={1024} value={draft.topic} onChange={(e) => set('topic', e.target.value)} />
@@ -89,6 +100,8 @@ function OverviewTab({ channel }) {
           />
         </Field>
       )}
+      {isText && <SpecialChannel channel={channel} />}
+      {isText && <FollowedChannels channel={channel} />}
       {dirty && (
         <div className="save-bar">
           <span>Unsaved changes</span>
@@ -97,6 +110,67 @@ function OverviewTab({ channel }) {
         </div>
       )}
     </>
+  );
+}
+
+/** Rules channel and welcome message channel switches, saved right away. */
+function SpecialChannel({ channel }) {
+  const server = useStore((s) => s.servers[channel.serverId]);
+  const perms = usePerms(channel.serverId);
+  if (!server || !has(perms, P.MANAGE_SERVER)) return null;
+  const isRules = server.rulesChannelId === channel.id;
+  const isSystem = server.systemChannelId === channel.id;
+  return (
+    <Field label="Use this channel for">
+      <div className="settings-block">
+        <div className="switch-row">
+          <span><Icon.Book size={15} className="inline-icon" /> Rules channel</span>
+          <Switch checked={isRules} onChange={(v) => updateServer(server.id, { rulesChannelId: v ? channel.id : null }).catch(() => {})} />
+        </div>
+        <div className="switch-row">
+          <span><Icon.UserPlus size={15} className="inline-icon" /> Welcome messages</span>
+          <Switch checked={isSystem} onChange={(v) => updateServer(server.id, { systemChannelId: v ? channel.id : null }).catch(() => {})} />
+        </div>
+      </div>
+    </Field>
+  );
+}
+
+/** Announcement channels from other servers that post into this one. */
+function FollowedChannels({ channel }) {
+  const [data, setData] = useState(null);
+  useEffect(() => {
+    let live = true;
+    fetchFollows(channel.id).then((d) => live && setData(d)).catch(() => {});
+    return () => { live = false; };
+  }, [channel.id]);
+  if (!data || (!data.following.length && !(channel.type === 'announcement' && data.followers))) return null;
+  return (
+    <Field label="Following">
+      {channel.type === 'announcement' && data.followers > 0 && (
+        <div className="follow-row">
+          <Icon.Follow size={18} />
+          <div className="follow-meta"><b>{data.followers} {data.followers === 1 ? 'channel follows' : 'channels follow'} this one</b></div>
+        </div>
+      )}
+      <div className="follow-list">
+        {data.following.map((f) => (
+          <div className="follow-row" key={f.channelId}>
+            <ServerGlyph server={{ id: f.serverId, name: f.serverName, icon: f.serverIcon }} size={32} />
+            <div className="follow-meta"><b>{f.serverName}</b><small>#{f.channelName}</small></div>
+            <Button
+              variant="ghost"
+              onClick={async () => {
+                const following = await unfollowChannel(f.channelId, channel.id).catch(() => null);
+                if (following) setData((d) => ({ ...d, following }));
+              }}
+            >
+              Unfollow
+            </Button>
+          </div>
+        ))}
+      </div>
+    </Field>
   );
 }
 

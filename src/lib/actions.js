@@ -1,4 +1,4 @@
-import { authApi, call, connectSocket, disconnectSocket, discoverServer, getSocket, getToken, native, setToken } from './api';
+import { authApi, call, connectSocket, disconnectSocket, discoverServer, getJson, getSocket, getToken, native, setToken } from './api';
 import { getState, resetState, setState, withKey, withoutKey } from './store';
 import { voice } from './voice';
 import { playSound, startLoop, stopLoop } from './sounds';
@@ -131,6 +131,7 @@ export function startSession(token) {
 
 
   socket.on('message:new', onMessageNew);
+  socket.on('gif:favorites', (list) => setState({ favoriteGifs: list }));
   socket.on('message:update', (m) => setState((s) => {
     const bucket = s.messages[m.channelId];
     if (!bucket) return null;
@@ -236,6 +237,8 @@ function onReady(data) {
     readStates: data.readStates,
     unreadDm: data.unreadDm,
     voice: data.voice,
+    favoriteGifs: data.favoriteGifs || [],
+    gifsEnabled: Boolean(data.gifsEnabled),
     messages: {},
     typing: {},
     view,
@@ -446,6 +449,11 @@ export function mentionsMe(m, state = getState()) {
   return new RegExp(`(^|[^\\w])@${name}(?![\\w.])`, 'i').test(m.content);
 }
 
+/** New posts in announcement channels notify like a mention, unless turned off. */
+function isAnnouncement(m, state) {
+  return m.kind === 'default' && state.channels[m.channelId]?.type === 'announcement' && state.settings.announcementNotifications !== false;
+}
+
 function onMessageNew(m) {
   const s = getState();
   const me = s.me;
@@ -466,7 +474,7 @@ function onMessageNew(m) {
       patch.readStates = withKey(st.readStates, m.channelId, m.id);
     } else {
       if (isDm) patch.unreadDm = withKey(st.unreadDm, m.channelId, (st.unreadDm[m.channelId] || 0) + 1);
-      else if (mentionsMe(m, st)) patch.mentions = withKey(st.mentions, m.channelId, (st.mentions[m.channelId] || 0) + 1);
+      else if (mentionsMe(m, st) || isAnnouncement(m, st)) patch.mentions = withKey(st.mentions, m.channelId, (st.mentions[m.channelId] || 0) + 1);
     }
     return patch;
   });
@@ -474,7 +482,7 @@ function onMessageNew(m) {
   if (own) return;
   if (viewing) { markRead(m.channelId, m.id); return; }
   if (m.kind !== 'default') return;
-  const important = isDm || mentionsMe(m, s);
+  const important = isDm || mentionsMe(m, s) || isAnnouncement(m, s);
   if (important && me.status !== 'dnd') {
     playSound('message');
     const author = s.users[m.authorId];
@@ -603,6 +611,39 @@ export const updateChannel = (channelId, patch) => attempt(() => call('channel:u
 export const setChannelPermissions = (channelId, overwrites, synced = false) => attempt(() => call('channel:permissions', { channelId, overwrites, synced }), { success: 'Permissions saved' });
 export const deleteChannel = (channelId) => attempt(() => call('channel:delete', { channelId }));
 export const reorderChannels = (serverId, items) => attempt(() => call('channel:reorder', { serverId, items }));
+
+export const setRulesChannel = (serverId, channelId) => updateServer(serverId, { rulesChannelId: channelId });
+export const followChannel = (sourceId, targetId) => attempt(() => call('channel:follow', { sourceId, targetId }), { success: 'Channel followed' });
+export const unfollowChannel = (sourceId, targetId) => attempt(() => call('channel:unfollow', { sourceId, targetId }));
+export const fetchFollows = (channelId) => call('channel:follows', { channelId });
+
+/* GIFs */
+export const gifApi = {
+  categories: () => getJson('/api/gifs/categories'),
+  trending: (page = 1) => getJson(`/api/gifs/trending?page=${page}`),
+  search: (query, page = 1) => getJson(`/api/gifs/search?q=${encodeURIComponent(query)}&page=${page}`),
+};
+
+export const isFavoriteGif = (state, url) => state.favoriteGifs.some((g) => g.url === url);
+
+export function toggleFavoriteGif(gif) {
+  const favorite = !isFavoriteGif(getState(), gif.url);
+  // Update right away so the star responds instantly; the server echoes the final list.
+  setState((s) => ({ favoriteGifs: favorite ? [{ ...gif }, ...s.favoriteGifs] : s.favoriteGifs.filter((g) => g.url !== gif.url) }));
+  return attempt(() => call('gif:favorite', { gif, favorite }));
+}
+
+/** Sends a GIF: links go as the message text, uploaded GIFs are re-attached. */
+export function sendGif(channelId, gif, replyTo = null) {
+  if (gif.upload) {
+    return sendMessage(channelId, {
+      content: '',
+      attachments: [{ url: gif.url, name: gif.name || 'image.gif', size: gif.size || 0, type: 'image/gif', width: gif.width, height: gif.height }],
+      replyTo,
+    });
+  }
+  return sendMessage(channelId, { content: gif.url, attachments: [], replyTo });
+}
 
 export const moderateVoice = (userId, patch) => attempt(() => call('voice:moderate', { userId, ...patch }));
 

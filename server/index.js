@@ -9,6 +9,7 @@ import bcrypt from 'bcryptjs';
 import { Server } from 'socket.io';
 import { q, tx, newId, newInviteCode, UPLOAD_DIR } from './db.js';
 import { getIceServers, turnConfigured } from './ice.js';
+import { GifError, gifCategories, klipyKey, searchGifs, trendingGifs } from './gifs.js';
 import {
   ALL, CHANNEL_SCOPED, DEFAULT_EVERYONE, P, computePermissions, has, topPosition,
 } from '../shared/permissions.js';
@@ -241,6 +242,7 @@ function serializeMessage(m) {
     mentions: parseJson(m.mentions, {}),
     replyTo,
     kind: m.kind,
+    crosspost: m.crosspost ? parseJson(m.crosspost, null) : undefined,
     editedAt: m.edited_at,
     createdAt: m.created_at,
   };
@@ -442,6 +444,22 @@ app.post('/api/upload', (req, res) => {
   });
 });
 
+const gifRoute = (fn) => async (req, res) => {
+  const uid = authFromHeader(req);
+  if (!uid) return res.status(401).json({ error: 'Unauthorized' });
+  try {
+    rateLimit('gif:' + uid, 90, 60 * 1000);
+    res.json(await fn(uid, req));
+  } catch (err) {
+    if (!(err instanceof GifError) && !(err instanceof ApiError)) console.error('GIF error', err.message);
+    res.status(err instanceof GifError ? 503 : err instanceof ApiError ? 429 : 500).json({ error: err instanceof GifError || err instanceof ApiError ? err.message : 'GIF search is unavailable' });
+  }
+};
+app.get('/api/gifs/status', gifRoute(() => ({ enabled: Boolean(klipyKey()) })));
+app.get('/api/gifs/categories', gifRoute((uid) => gifCategories(uid)));
+app.get('/api/gifs/trending', gifRoute((uid, req) => trendingGifs(uid, req.query.page)));
+app.get('/api/gifs/search', gifRoute((uid, req) => searchGifs(uid, req.query.q, req.query.page)));
+
 const INLINE = /\.(png|jpe?g|gif|webp|avif|bmp|mp4|webm|mov|mp3|wav|ogg|m4a|flac)$/i;
 app.use('/uploads', express.static(UPLOAD_DIR, {
   maxAge: '30d',
@@ -608,6 +626,67 @@ function syncServer(serverId, onlyUser = null) {
   enforceVoice(ctx);
 }
 
+/* ---------------- Favorite GIFs ---------------- */
+
+const GIF_URL_RE = /^https:\/\/([a-z0-9-]+\.)*klipy\.com\/\S+$/i;
+
+function favoriteGifs(uid) {
+  return q('SELECT data FROM favorite_gifs WHERE user_id = ? ORDER BY created_at DESC').all(uid).map((r) => parseJson(r.data, null)).filter(Boolean);
+}
+
+/** A favorite is either a KLIPY link or a GIF uploaded to this server. */
+const isUploadPath = (v) => typeof v === 'string' && /^\/uploads\/[A-Za-z0-9_.-]+$/.test(v);
+
+function sanitizeGif(g) {
+  const upload = isUploadPath(g?.url) ? g.url : null;
+  const url = upload || (GIF_URL_RE.test(String(g?.url || '')) ? String(g.url).slice(0, 500) : '');
+  if (!url) fail('That GIF cannot be saved');
+  const preview = (isUploadPath(g?.preview) ? g.preview : null) || (GIF_URL_RE.test(String(g?.preview || '')) ? String(g.preview).slice(0, 500) : url);
+  return {
+    url,
+    preview,
+    width: Math.max(0, Math.min(4096, Number(g?.width) || 0)),
+    height: Math.max(0, Math.min(4096, Number(g?.height) || 0)),
+    upload: Boolean(upload),
+    name: upload ? (str(g?.name, 200) || 'image.gif') : undefined,
+    size: upload ? Math.max(0, Number(g?.size) || 0) : undefined,
+  };
+}
+
+/* ---------------- Announcement follows ---------------- */
+
+const MAX_FOLLOWS_PER_CHANNEL = 10;
+
+function sourceInfo(channel) {
+  const server = q('SELECT id, name, icon FROM servers WHERE id = ?').get(channel.server_id);
+  return { serverId: server.id, serverName: server.name, serverIcon: server.icon, channelId: channel.id, channelName: channel.name };
+}
+
+/** Copies a new announcement into every channel that follows it. */
+function crosspost(access, uid, messageId, text, files) {
+  const targets = q('SELECT target_id FROM channel_follows WHERE source_id = ?').all(access.channel.id);
+  if (!targets.length) return;
+  const info = JSON.stringify({ ...sourceInfo(access.channel), messageId });
+  for (const { target_id: targetId } of targets) {
+    const target = q('SELECT * FROM channels WHERE id = ?').get(targetId);
+    const tctx = target && serverCtx(target.server_id);
+    if (!tctx) continue;
+    const id = newId();
+    q("INSERT INTO messages (id, channel_id, author_id, content, attachments, mentions, crosspost, created_at) VALUES (?, ?, ?, ?, ?, '{}', ?, ?)")
+      .run(id, targetId, uid, text, JSON.stringify(files), info, now());
+    toUsers(channelViewers(tctx, targetId), 'message:new', serializeMessage(q('SELECT * FROM messages WHERE id = ?').get(id)));
+  }
+}
+
+function followsFor(channelId) {
+  return q('SELECT f.source_id, f.created_at FROM channel_follows f WHERE f.target_id = ? ORDER BY f.created_at').all(channelId)
+    .map((f) => {
+      const ch = q('SELECT * FROM channels WHERE id = ?').get(f.source_id);
+      return ch ? { ...sourceInfo(ch), createdAt: f.created_at } : null;
+    })
+    .filter(Boolean);
+}
+
 /* ---------------- Ready payload ---------------- */
 
 function buildReady(uid) {
@@ -627,7 +706,7 @@ function buildReady(uid) {
     unreadDm[dm.id] = q('SELECT COUNT(*) AS n FROM messages WHERE channel_id = ? AND id > ? AND author_id != ?').get(dm.id, last, uid).n;
   }
   const roomIds = [...servers.flatMap((s) => s.channels.filter((c) => c.type === 'voice').map((c) => c.id)), ...dms.map((d) => d.id)];
-  return { user: selfUser(me), servers, dms, relationships, users, readStates, unreadDm, voice: voiceStatesFor(roomIds) };
+  return { user: selfUser(me), servers, dms, relationships, users, readStates, unreadDm, voice: voiceStatesFor(roomIds), favoriteGifs: favoriteGifs(uid), gifsEnabled: Boolean(klipyKey()) };
 }
 
 // userId:channelId -> time of last message (slowmode)
@@ -639,7 +718,12 @@ const CHANNEL_TYPES = ['text', 'voice', 'announcement', 'category'];
 
 function normalizeChannelName(name, type) {
   let n = str(name, 100);
-  if (isTextType(type)) n = n.toLowerCase().replace(/\s+/g, '-').replace(/[^\p{L}\p{N}_-]/gu, '').replace(/-+/g, '-');
+  // Text channel names are lowercase with dashes, but keep emojis and decorative symbols like the ┃ divider
+  if (isTextType(type)) {
+    n = n.toLowerCase().replace(/\s+/g, '-')
+      .replace(/[^\p{L}\p{N}\p{M}\p{S}‍_-]/gu, '').replace(/[$+<=>^`|~]/g, '')
+      .replace(/-+/g, '-').replace(/^-|-$/g, '');
+  }
   if (!n) fail('Channel name is required');
   return n;
 }
@@ -1100,7 +1184,10 @@ io.on('connection', (socket) => {
 
   on('channel:create', ({ serverId, name, type, parentId, private: isPrivate, allowRoles }) => {
     const ctx = requireCtx(serverId, uid);
-    const t = CHANNEL_TYPES.includes(type) ? type : 'text';
+    // "rules" is a text channel that only staff can post in, set as the server's rules channel
+    const asRules = type === 'rules';
+    if (asRules) requirePerm(ctx, uid, P.MANAGE_SERVER);
+    const t = asRules ? 'text' : CHANNEL_TYPES.includes(type) ? type : 'text';
     const parent = parentId ? ctx.channels.get(String(parentId)) : null;
     if (parentId && (!parent || parent.type !== 'category' || t === 'category')) fail('Invalid category');
     requirePerm(ctx, uid, P.MANAGE_CHANNELS, parent?.id || null);
@@ -1115,7 +1202,7 @@ io.on('connection', (socket) => {
       }
       if (ctx.row.owner_id !== uid) extra.push({ id: uid, type: 'member', allow: P.VIEW_CHANNEL, deny: 0 });
     }
-    if (t === 'announcement') extra.push({ id: ctx.row.id, type: 'role', allow: 0, deny: P.SEND_MESSAGES });
+    if (t === 'announcement' || asRules) extra.push({ id: ctx.row.id, type: 'role', allow: 0, deny: P.SEND_MESSAGES });
 
     const merged = new Map(inherited.map((o) => [o.id, { ...o }]));
     for (const o of extra) {
@@ -1129,6 +1216,7 @@ io.on('connection', (socket) => {
     tx(() => {
       id = insertChannel(ctx.row.id, { name: normalizeChannelName(name, t), type: t, parentId: parent?.id || null, synced: custom ? 0 : 1 });
       if (custom || t === 'category') setOverwrites(id, [...merged.values()]);
+      if (asRules) q('UPDATE servers SET rules_channel_id = ? WHERE id = ?').run(id, ctx.row.id);
     });
     syncServer(ctx.row.id);
     return serializeChannel(serverCtx(ctx.row.id).channels.get(id), serverCtx(ctx.row.id));
@@ -1148,8 +1236,28 @@ io.on('connection', (socket) => {
         parent = c.id;
       }
     }
-    q('UPDATE channels SET name = ?, topic = ?, slowmode = ?, user_limit = ?, parent_id = ? WHERE id = ?').run(
-      'name' in p ? normalizeChannelName(p.name, ch.type) : ch.name,
+    // Text and announcement channels can switch between the two.
+    let type = ch.type;
+    if ('type' in p && p.type !== ch.type) {
+      if (!isTextType(ch.type) || !isTextType(p.type)) fail('This channel type cannot be changed');
+      type = p.type;
+      if (type === 'announcement') {
+        // Like a new announcement channel, only people with an explicit allow can post.
+        const effective = ch.synced && ch.parent_id ? (ctx.overwrites.get(ch.parent_id) || []) : (ctx.overwrites.get(ch.id) || []);
+        const list = effective.map((o) => ({ ...o }));
+        let everyone = list.find((o) => o.id === ctx.row.id);
+        if (!everyone) list.push(everyone = { id: ctx.row.id, type: 'role', allow: 0, deny: 0 });
+        everyone.allow &= ~P.SEND_MESSAGES;
+        everyone.deny |= P.SEND_MESSAGES;
+        tx(() => {
+          q('UPDATE channels SET synced = 0 WHERE id = ?').run(ch.id);
+          setOverwrites(ch.id, list);
+        });
+      }
+    }
+    q('UPDATE channels SET name = ?, type = ?, topic = ?, slowmode = ?, user_limit = ?, parent_id = ? WHERE id = ?').run(
+      'name' in p ? normalizeChannelName(p.name, type) : ch.name,
+      type,
       'topic' in p ? str(p.topic, 1024) : ch.topic,
       'slowmode' in p ? Math.max(0, Math.min(21600, Number(p.slowmode) || 0)) : ch.slowmode,
       'userLimit' in p ? Math.max(0, Math.min(99, Number(p.userLimit) || 0)) : ch.user_limit,
@@ -1259,12 +1367,63 @@ io.on('connection', (socket) => {
     });
     const msg = { ...serializeMessage(q('SELECT * FROM messages WHERE id = ?').get(id)), nonce: str(nonce, 64) || undefined };
     emitToChannel(access, 'message:new', msg);
+    if (access.kind === 'channel' && access.channel.type === 'announcement') crosspost(access, uid, id, text, files);
     return msg;
+  });
+
+  on('channel:follow', ({ sourceId, targetId }) => {
+    const src = channelAccess(uid, sourceId);
+    if (src.kind !== 'channel' || src.channel.type !== 'announcement') fail('Only announcement channels can be followed');
+    const target = q('SELECT * FROM channels WHERE id = ?').get(String(targetId || ''));
+    if (!target || !isTextType(target.type)) fail('Pick a text channel');
+    if (target.id === src.channel.id) fail('A channel cannot follow itself');
+    const tctx = requireCtx(target.server_id, uid);
+    requirePerm(tctx, uid, P.MANAGE_CHANNELS, target.id);
+    if (q('SELECT 1 FROM channel_follows WHERE source_id = ? AND target_id = ?').get(src.channel.id, target.id)) fail('That channel already follows this one');
+    if (q('SELECT COUNT(*) AS c FROM channel_follows WHERE target_id = ?').get(target.id).c >= MAX_FOLLOWS_PER_CHANNEL) fail('That channel follows too many channels');
+    q('INSERT INTO channel_follows (source_id, target_id, created_by, created_at) VALUES (?, ?, ?, ?)').run(src.channel.id, target.id, uid, now());
+    const id = newId();
+    q("INSERT INTO messages (id, channel_id, author_id, content, kind, crosspost, created_at) VALUES (?, ?, ?, '', 'follow', ?, ?)")
+      .run(id, target.id, uid, JSON.stringify(sourceInfo(src.channel)), now());
+    toUsers(channelViewers(tctx, target.id), 'message:new', serializeMessage(q('SELECT * FROM messages WHERE id = ?').get(id)));
+    return true;
+  });
+
+  on('channel:unfollow', ({ sourceId, targetId }) => {
+    const target = q('SELECT * FROM channels WHERE id = ?').get(String(targetId || ''));
+    if (!target) fail('Channel not found');
+    requirePerm(requireCtx(target.server_id, uid), uid, P.MANAGE_CHANNELS, target.id);
+    q('DELETE FROM channel_follows WHERE source_id = ? AND target_id = ?').run(String(sourceId || ''), target.id);
+    return followsFor(target.id);
+  });
+
+  on('channel:follows', ({ channelId }) => {
+    const ch = q('SELECT * FROM channels WHERE id = ?').get(String(channelId || ''));
+    if (!ch) fail('Channel not found');
+    requirePerm(requireCtx(ch.server_id, uid), uid, P.MANAGE_CHANNELS, ch.id);
+    return {
+      following: followsFor(ch.id),
+      followers: q('SELECT COUNT(*) AS c FROM channel_follows WHERE source_id = ?').get(ch.id).c,
+    };
+  });
+
+  on('gif:favorite', ({ gif, favorite }) => {
+    const g = sanitizeGif(gif);
+    if (favorite) {
+      const count = q('SELECT COUNT(*) AS c FROM favorite_gifs WHERE user_id = ?').get(uid).c;
+      if (count >= 500) fail('You can save up to 500 GIFs');
+      q('INSERT OR REPLACE INTO favorite_gifs (user_id, url, data, created_at) VALUES (?, ?, ?, ?)').run(uid, g.url, JSON.stringify(g), now());
+    } else {
+      q('DELETE FROM favorite_gifs WHERE user_id = ? AND url = ?').run(uid, g.url);
+    }
+    const list = favoriteGifs(uid);
+    io.to('user:' + uid).emit('gif:favorites', list);
+    return list;
   });
 
   on('message:edit', ({ messageId, content }) => {
     const m = q('SELECT * FROM messages WHERE id = ?').get(String(messageId || ''));
-    if (!m || m.author_id !== uid || m.kind !== 'default') fail('You cannot edit this message');
+    if (!m || m.author_id !== uid || m.kind !== 'default' || m.crosspost) fail('You cannot edit this message');
     const access = channelAccess(uid, m.channel_id);
     const text = str(content, 4000, { trim: false }).replace(/^\s+|\s+$/g, '');
     if (!text && JSON.parse(m.attachments).length === 0) fail('Message is empty');

@@ -76,6 +76,10 @@ Set one of these on the server:
 
 `GET /api/health` reports `"turn": true` once a relay is configured.
 
+### GIFs
+
+GIF search uses [KLIPY](https://klipy.com/developers) (free, no usage caps). Create an API key there, then either set `KLIPY_API_KEY` on the server or paste the key into `server/data/klipy-key.txt`. The server picks up the file within 30 seconds; no restart needed. The key stays on the server and is never sent to the app.
+
 ## Build the installer
 
 ```bash
